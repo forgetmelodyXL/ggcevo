@@ -36,6 +36,7 @@ npm install koishi-plugin-ggcevo
 | `切换 [index]` | — | 切换正在使用的游戏句柄 |
 | `查询 [handle]` | — | 查询某游戏句柄是否已被绑定 |
 | `解绑 [index]` | 解绑句柄 | 解除绑定某个游戏句柄 |
+| `地图检测` | — | 查询已配置地图（`mapMonitorMapIds`）的检测状态：在线状态、最后状态变更时间、24h/30d离线次数、近期事件。需开启 `mapMonitorEnabled` 且配置地图ID |
 
 ### 签到与虚拟物品（ggcevo）
 
@@ -93,6 +94,15 @@ npm install koishi-plugin-ggcevo
 - `ggcevo_activity_claim_log` — 活动领取记录（主键 `activity_id` + `user_id`）
 
 ## 更新日志
+
+### v1.0.3
+
+- 复原「地图检测」指令（命名空间 `sc2arcade/地图检测`），查询已配置地图的检测状态（在线状态、最后状态变更时间、24h/30d 离线次数、近期事件）。原被删除的是「地图检测调试」指令，本次仅复原正常地图检测指令。
+- 清理未使用的工具函数：`profilesMatches`、`profilesMostPlayed`、`mapsplayerbase`、`lobbiesActive`、`lobbiesHistory`、`convertDateTimeFormat`、`makeHttpRequest`。
+
+### v1.0.2
+
+- 移除未使用的 `sc2arcade_map` 数据库模型及相关代码（该表无任何调用）。
 
 ### v1.0.1
 

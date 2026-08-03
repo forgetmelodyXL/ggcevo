@@ -614,6 +614,69 @@ export function apply(ctx: Context, config: Config) {
       }
     });
 
+  // 地图检测查询
+  ctx.command('sc2arcade/地图检测', '查询已配置的地图详细信息')
+    .action(async (argv) => {
+      if (!config.mapMonitorEnabled || config.mapMonitorMapIds.length === 0) {
+        return `<quote id="${argv.session.messageId}"/>⚠️ 地图检测功能未开启或未配置地图ID。`;
+      }
+
+      try {
+        const response = await ctx.http.get('https://server.dreamprotocol.info:13085/mapmonitor/maps');
+        const maps: any[] = response.maps || [];
+
+        const targetMaps = maps.filter((m: any) => config.mapMonitorMapIds.includes(m.mapId));
+
+        if (targetMaps.length === 0) {
+          return `<quote id="${argv.session.messageId}"/>📭 未找到已配置的地图信息。`;
+        }
+
+        const fieldLabels: Record<string, string> = {
+          mapName: '地图名称',
+          isOnline: '在线状态',
+          lastStatusChangeTime: '最后状态变更时间',
+          offlineCountLast24h: '24h内离线次数',
+          offlineCountLast30d: '30d内离线次数',
+          recentEvents: '近期事件',
+        };
+
+        const timeFields = ['lastStatusChangeTime'];
+
+        const messages = targetMaps.map((mapData: any) => {
+          const lines: string[] = [];
+          lines.push('━━━━━━━━━━━━━━━━');
+          lines.push(`📋 ${mapData.mapName || '未知地图'} (ID: ${mapData.mapId})`);
+          for (const key of Object.keys(mapData)) {
+            if (key === 'mapId' || key === 'mapName') continue;
+            if (key === 'lastCheckTime' || key === 'firstSeenTime' || key === 'popularityRank') continue;
+            const value = mapData[key];
+            if (value !== null && value !== undefined && value !== '') {
+              const label = fieldLabels[key] || key;
+              let displayValue: string;
+              if (key === 'isOnline') {
+                displayValue = value ? '🟢 在线' : '🔴 离线';
+              } else if (key === 'recentEvents') {
+                displayValue = formatRecentEvents(value);
+              } else if (timeFields.includes(key)) {
+                displayValue = toBeijingTime(value);
+              } else if (typeof value === 'object') {
+                displayValue = JSON.stringify(value);
+              } else {
+                displayValue = String(value);
+              }
+              lines.push(`  ${label}: ${displayValue}`);
+            }
+          }
+          return lines.join('\n');
+        });
+
+        return `<quote id="${argv.session.messageId}"/>${messages.join('\n')}`;
+      } catch (error) {
+        console.error('查询地图检测信息失败:', error);
+        return '⚠️ 服务器繁忙, 请稍后尝试。';
+      }
+    });
+
   // ========== 命令注册 (ggcevo-sign 部分) ==========
 
   ctx.command('ggcevo/签到')
