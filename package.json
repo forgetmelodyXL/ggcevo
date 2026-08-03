@@ -1,7 +1,7 @@
 {
   "name": "koishi-plugin-ggcevo",
   "description": "GGCEVO 综合插件：星际争霸2游戏句柄绑定 + 签到/抽奖/兑换/背包/活动系统等虚拟物品玩法",
-  "version": "1.0.1",
+  "version": "1.0.0",
   "main": "lib/index.js",
   "typings": "lib/index.d.ts",
   "files": [
@@ -20,18 +20,14 @@
     "活动"
   ],
   "author": "",
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/forgetmelodyXL/ggcevo.git"
-  },
-  "homepage": "https://github.com/forgetmelodyXL/ggcevo",
-  "bugs": {
-    "url": "https://github.com/forgetmelodyXL/ggcevo/issues"
+  "koishi": {
+    "service": {
+      "required": [
+        "database"
+      ]
+    }
   },
   "peerDependencies": {
-    "koishi": "^4.18.7"
-  },
-  "devDependencies": {
     "koishi": "^4.18.7"
   }
 }
