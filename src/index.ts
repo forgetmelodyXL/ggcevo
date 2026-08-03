@@ -422,31 +422,18 @@ export function apply(ctx: Context, config: Config) {
         return `<quote id="${session.messageId}"/>❌ 您已绑定过该游戏句柄。`;
       }
 
-      try {
-        await makeHttpRequest(
-          ctx,
-          `https://api.sc2arcade.com/profiles/${regionId}/${realmId}/${profileId}`
-        );
+      const isFirstHandle = userHandles.length === 0;
 
-        const isFirstHandle = userHandles.length === 0;
+      await ctx.database.create('sc2arcade_player', {
+        userId: session.userId,
+        regionId,
+        realmId,
+        profileId,
+        isActive: isFirstHandle,
+        createdAt: new Date()
+      });
 
-        await ctx.database.create('sc2arcade_player', {
-          userId: session.userId,
-          regionId,
-          realmId,
-          profileId,
-          isActive: isFirstHandle,
-          createdAt: new Date()
-        });
-
-        return `<quote id="${session.messageId}"/>✅ 您已成功绑定游戏句柄${isFirstHandle ? '并设为当前使用' : ''}并已通过验证。`;
-      } catch (error) {
-        if (error.response && error.response.status === 404) {
-          return `<quote id="${session.messageId}"/>❌ 绑定失败, 您尝试绑定的游戏句柄不存在。`;
-        }
-        console.error('查询或绑定失败:', error);
-        return '⚠️ 服务器繁忙, 请稍后尝试。';
-      }
+      return `<quote id="${session.messageId}"/>✅ 您已成功绑定游戏句柄${isFirstHandle ? '并设为当前使用' : ''}。`;
     });
 
   // 句柄查询
@@ -2021,48 +2008,6 @@ export function apply(ctx: Context, config: Config) {
 
 // ========== 工具函数 ==========
 
-function profilesMatches(session: any, response: any) {
-  const data = response.data.results;
-
-  const decisionTranslate = (decision) => {
-    const translations = {
-      left: '🚶 离开',
-      win: '🎉 胜利',
-      loss: '😞 失败',
-      tie: '🤝 平局'
-    };
-    return translations[decision] || decision;
-  };
-
-  const header = `<quote id="${session.messageId}"/>对局记录：\n`;
-  const matchList = data.map((match, index) =>
-    `${index + 1}. 地图: ${match.map.name}, 结果: ${decisionTranslate(match.decision)}`
-  ).join('\n');
-
-  return header + matchList;
-}
-
-function profilesMostPlayed(session: any, response: any) {
-  const data = response.data;
-
-  const topMaps = data
-    .filter(item => item.lobbiesStarted > 0)
-    .sort((a, b) => b.lobbiesStarted - a.lobbiesStarted)
-    .slice(0, 10)
-    .map((item, index) =>
-      `${index + 1}. 地图: ${item.map.name}, 游戏场数: ${item.lobbiesStarted}`
-    )
-    .join('\n');
-
-  return `<quote id="${session.messageId}"/>最常玩的地图排行：\n${topMaps}`;
-}
-
-function convertDateTimeFormat(dateString) {
-  const date = new Date(dateString);
-  const pad = n => String(n).padStart(2, '0');
-  return `${date.getFullYear()}/${pad(date.getMonth() + 1)}/${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
-}
-
 function toBeijingTime(isoString: string): string {
   const date = new Date(isoString);
   const beijingTime = new Date(date.getTime() + 8 * 60 * 60 * 1000);
@@ -2090,63 +2035,6 @@ function formatRecentEvents(events: any[]): string {
   return latest5.map((e: any) =>
     `${translateEventType(e.eventType)} (${toBeijingTime(e.eventTime)})`
   ).join(', ');
-}
-
-function mapsplayerbase(response) {
-  const data = response.data.results;
-
-  const topPlayers = data
-    .filter(item => item.lobbiesStarted > 0)
-    .sort((a, b) => b.lobbiesStarted - a.lobbiesStarted)
-    .map((item, index) => `${index + 1}. 玩家: ${item.profile.name}, 游戏场数: ${item.lobbiesStarted}`)
-    .join('\n');
-
-  return topPlayers;
-}
-
-function lobbiesActive(response: any, regionName: string) {
-  const data = response.data;
-
-  if (!data.length) return `🚪 当前${regionName}游戏大厅暂无房间。`;
-
-  const roomList = data.slice(0, 20).map((item, index) =>
-    `${index + 1}. 地图: ${item.map.name}, 人数: ${item.slotsHumansTaken}/${item.slotsHumansTotal}`
-  ).join('\n');
-
-  return `${regionName}游戏大厅房间列表：\n${roomList}`;
-}
-
-async function makeHttpRequest(ctx: Context, url: string) {
-  return await ctx.http.get(url);
-}
-
-async function lobbiesHistory(ctx: Context, response, status: string) {
-  const rooms = response.data.results
-    .filter(room => room.status === status && room.slotsHumansTaken > 0)
-    .slice(0, status === 'started' ? 5 : 20);
-
-  if (!rooms.length) {
-    return status === 'started'
-      ? '🚪 当前地图暂无历史房间。'
-      : '🚪 当前地图暂无等待中的房间。';
-  }
-
-  const roomMessages = rooms.map((room, index) => {
-    const humanSlots = room.slots
-      .filter(slot => slot.kind === 'human')
-      .sort((a, b) => a.slotNumber - b.slotNumber);
-
-    const slotList = humanSlots.map(slot =>
-      `  ${slot.slotNumber}. ${slot.name}`
-    );
-    return [
-      `🚪 房间 ${index + 1}: ${room.slotsHumansTaken}/${room.slotsHumansTotal}`,
-      `创建时间: ${convertDateTimeFormat(room.createdAt)}`,
-      ...slotList,
-    ].join('\n');
-  });
-
-  return roomMessages.join('\n\n');
 }
 
 function formatMapMonitorMessage(currentData: any, previousRecord: any): string {
