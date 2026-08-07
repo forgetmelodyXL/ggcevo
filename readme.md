@@ -24,6 +24,7 @@ npm install koishi-plugin-ggcevo
 | `mapMonitorEnabled` | `boolean` | `false` | 是否启用地图检测定时任务 |
 | `mapMonitorGroups` | `string[]` | `[]` | 地图检测广播的群组 ID 列表 |
 | `mapMonitorMapIds` | `number[]` | `[]` | 需要检测的地图 ID 列表 |
+| `mapMonitorApiUrl` | `string` | `https://server.dreamprotocol.info:13085/mapmonitor/maps` | 地图检测 API 地址 |
 
 ## 指令列表
 
@@ -94,6 +95,11 @@ npm install koishi-plugin-ggcevo
 - `ggcevo_activity_claim_log` — 活动领取记录（主键 `activity_id` + `user_id`）
 
 ## 更新日志
+
+### v1.0.4
+
+- 新增配置项 `mapMonitorApiUrl`，可将地图检测的 API 地址通过配置项填写，默认值为 `https://server.dreamprotocol.info:13085/mapmonitor/maps`。
+- 移除定时任务与「地图检测」指令中硬编码的 API 地址，改为读取 `mapMonitorApiUrl` 配置。
 
 ### v1.0.3
 

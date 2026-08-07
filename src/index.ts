@@ -6,12 +6,14 @@ export interface Config {
   mapMonitorEnabled: boolean
   mapMonitorGroups: string[]
   mapMonitorMapIds: number[]
+  mapMonitorApiUrl: string
 }
 
 export const Config: Schema<Config> = Schema.object({
   mapMonitorEnabled: Schema.boolean().description('是否启用地图检测定时任务').default(false),
   mapMonitorGroups: Schema.array(Schema.string()).description('地图检测广播的群组ID列表').default([]),
   mapMonitorMapIds: Schema.array(Schema.number()).description('需要检测的地图ID列表').default([]),
+  mapMonitorApiUrl: Schema.string().description('地图检测API地址').default('https://server.dreamprotocol.info:13085/mapmonitor/maps'),
 })
 
 export const inject = {
@@ -300,7 +302,7 @@ export function apply(ctx: Context, config: Config) {
   if (config.mapMonitorEnabled && config.mapMonitorGroups.length > 0 && config.mapMonitorMapIds.length > 0) {
     ctx.setInterval(async () => {
       try {
-        const response = await ctx.http.get('https://server.dreamprotocol.info:13085/mapmonitor/maps');
+        const response = await ctx.http.get(config.mapMonitorApiUrl);
         const maps: any[] = response.maps || [];
 
         for (const mapId of config.mapMonitorMapIds) {
@@ -622,7 +624,7 @@ export function apply(ctx: Context, config: Config) {
       }
 
       try {
-        const response = await ctx.http.get('https://server.dreamprotocol.info:13085/mapmonitor/maps');
+        const response = await ctx.http.get(config.mapMonitorApiUrl);
         const maps: any[] = response.maps || [];
 
         const targetMaps = maps.filter((m: any) => config.mapMonitorMapIds.includes(m.mapId));
