@@ -19,12 +19,32 @@ npm install koishi-plugin-ggcevo
 
 ## 配置项
 
+### 地图检测
+
 | 配置项 | 类型 | 默认值 | 说明 |
 | --- | --- | --- | --- |
 | `mapMonitorEnabled` | `boolean` | `false` | 是否启用地图检测定时任务 |
 | `mapMonitorGroups` | `string[]` | `[]` | 地图检测广播的群组 ID 列表 |
 | `mapMonitorMapIds` | `number[]` | `[]` | 需要检测的地图 ID 列表 |
 | `mapMonitorApiUrl` | `string` | `https://server.dreamprotocol.info:13085/mapmonitor/maps` | 地图检测 API 地址 |
+
+### 腾讯文档（封禁记录查询）
+
+支持两种授权模式，二选一即可：
+
+| 配置项 | 类型 | 默认值 | 说明 |
+| --- | --- | --- | --- |
+| `tencentDocsEnabled` | `boolean` | `false` | 是否启用腾讯文档功能 |
+| `tencentDocsClientId` | `string` | `''` | 应用 Client ID（应用ID） |
+| `tencentDocsClientSecret` | `string` | `''` | 应用 Client Secret（**应用级模式必填**，用户级模式留空） |
+| `tencentDocsAccessToken` | `string` | `''` | Access Token（**用户级模式必填**，通过扫码授权获取） |
+| `tencentDocsOpenId` | `string` | `''` | Open ID（**用户级模式必填**，与 Access Token 同时获取） |
+| `tencentDocsBanListFileId` | `string` | `DTVdYZVBDdFhEUkp6` | 封禁记录在线表格文件ID（短ID或完整ID） |
+| `tencentDocsBanListSheetId` | `string` | `BB08J2` | 封禁记录工作表ID（表格URL中 `tab` 参数） |
+
+**授权模式说明：**
+- **用户级模式**（推荐用于无 `Client Secret` 的场景）：填写 `tencentDocsClientId` + `tencentDocsAccessToken` + `tencentDocsOpenId`，三者均通过腾讯文档开放平台扫码授权流程获取。Token 过期后需重新获取并在控制台更新。
+- **应用级模式**：填写 `tencentDocsClientId` + `tencentDocsClientSecret`，插件自动获取并刷新 Token，无需手动维护。需应用已开通 `scope.auth.account` 权限。
 
 ## 指令列表
 
@@ -57,6 +77,14 @@ npm install koishi-plugin-ggcevo
 | `活动列表` | — | — | 查看当前所有活动 |
 | `补签` | — | — | 使用补签券补签漏签的日期 |
 | `使用 <name>` | — | — | 使用指定物品（如赎罪券等） |
+| `封禁记录` | — | — | 查询当前绑定句柄在腾讯文档封禁记录表中的全部记录，每页显示 1 条，支持翻页（回复"下一页/上一页/页码/退出"） |
+| `同步封禁记录` | — | 3 | 立即从腾讯文档拉取全量数据并写入数据库（管理员指令） |
+
+### 腾讯文档
+
+| 指令 | 说明 |
+| --- | --- |
+| `腾讯文档/状态` | 查看腾讯文档授权状态（授权模式、Open ID、令牌过期时间等） |
 
 ## 物品与奖池
 
@@ -93,8 +121,35 @@ npm install koishi-plugin-ggcevo
 - `ggcevo_exchange_log` — 兑换记录
 - `ggcevo_activity` — 活动配置
 - `ggcevo_activity_claim_log` — 活动领取记录（主键 `activity_id` + `user_id`）
+- `ggcevo_docs_token` — 腾讯文档令牌缓存（应用级模式使用，主键 `user_id`，应用级账号固定为 `app_account`）
+- `ggcevo_ban_record` — 封禁记录（主键 `id` 自增，对应文档行号 `id+1`，每小时全量同步）
 
 ## 更新日志
+
+### v1.0.5
+
+新增**腾讯文档封禁记录查询**功能，基于腾讯文档开放平台 V3 在线表格接口实现。
+
+**新增功能：**
+- **腾讯文档授权**：支持「用户级 Token」与「应用级账号」双授权模式自动识别
+  - 用户级模式：填写 `Client ID` + `Access Token` + `Open ID`（适用于无 Client Secret 的场景）
+  - 应用级模式：填写 `Client ID` + `Client Secret`（自动获取并刷新 Token，需 `scope.auth.account` 权限）
+- **封禁记录同步**：每小时自动从腾讯文档在线表格全量拉取数据写入数据库（启动后延迟 5 秒首次同步），采用全量替换策略保证 `id` 与文档行号严格对应
+- **封禁记录查询**：`封禁记录` 指令查询当前绑定句柄的全部封禁记录，每页 1 条支持翻页（下一页/上一页/页码/退出），显示文档行号便于定位原文档
+- **手动同步**：`同步封禁记录` 指令（管理员权限 3）立即触发同步
+- **授权状态查询**：`腾讯文档/状态` 指令查看当前授权模式与令牌信息
+
+**新增配置项：**
+- `tencentDocsEnabled`、`tencentDocsClientId`、`tencentDocsClientSecret`
+- `tencentDocsAccessToken`、`tencentDocsOpenId`
+- `tencentDocsBanListFileId`（默认 `DTVdYZVBDdFhEUkp6`）、`tencentDocsBanListSheetId`（默认 `BB08J2`）
+
+**新增数据库表：**
+- `ggcevo_docs_token` — 令牌缓存（应用级模式）
+- `ggcevo_ban_record` — 封禁记录（主键自增 `id`，对应文档行号 `id+1`）
+
+**表格结构要求：**
+- A列：句柄 / C列：封禁等级 / D列：处罚原因 / E列：处罚次数 / F列：审核员 / G列：审核时间
 
 ### v1.0.4
 

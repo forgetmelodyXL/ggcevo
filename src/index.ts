@@ -10,6 +10,8 @@ export interface Config {
   tencentDocsEnabled: boolean
   tencentDocsClientId: string
   tencentDocsClientSecret: string
+  tencentDocsAccessToken: string
+  tencentDocsOpenId: string
   tencentDocsBanListFileId: string
   tencentDocsBanListSheetId: string
 }
@@ -19,9 +21,11 @@ export const Config: Schema<Config> = Schema.object({
   mapMonitorGroups: Schema.array(Schema.string()).description('地图检测广播的群组ID列表').default([]),
   mapMonitorMapIds: Schema.array(Schema.number()).description('需要检测的地图ID列表').default([]),
   mapMonitorApiUrl: Schema.string().description('地图检测API地址').default('https://server.dreamprotocol.info:13085/mapmonitor/maps'),
-  tencentDocsEnabled: Schema.boolean().description('是否启用腾讯文档(应用级账号)功能').default(false),
-  tencentDocsClientId: Schema.string().description('腾讯文档开放平台应用 Client ID').default(''),
-  tencentDocsClientSecret: Schema.string().description('腾讯文档开放平台应用 Client Secret').role('secret').default(''),
+  tencentDocsEnabled: Schema.boolean().description('是否启用腾讯文档功能').default(false),
+  tencentDocsClientId: Schema.string().description('腾讯文档开放平台应用 Client ID(应用ID)').default(''),
+  tencentDocsClientSecret: Schema.string().description('腾讯文档应用 Client Secret(应用级账号模式需要, 用户级模式留空)').role('secret').default(''),
+  tencentDocsAccessToken: Schema.string().description('腾讯文档 Access Token(用户级模式必填, 通过扫码授权获取)').role('secret').default(''),
+  tencentDocsOpenId: Schema.string().description('腾讯文档 Open ID(用户级模式必填, 与 Access Token 同时获取)').default(''),
   tencentDocsBanListFileId: Schema.string().description('封禁记录在线表格的文件ID(短ID或完整ID)').default('DTVdYZVBDdFhEUkp6'),
   tencentDocsBanListSheetId: Schema.string().description('封禁记录工作表ID(表格URL中tab参数)').default('BB08J2'),
 })
@@ -94,6 +98,7 @@ declare module 'koishi' {
     ggcevo_activity: Activity
     ggcevo_activity_claim_log: ActivityClaimLog
     ggcevo_docs_token: GgcEvoDocsToken
+    ggcevo_ban_record: GgcEvoBanRecord
   }
 }
 
@@ -121,6 +126,25 @@ export interface GgcEvoDocsToken {
   access_token: string
   refresh_token: string
   expires_at: Date
+  update_time: Date
+}
+
+export interface GgcEvoBanRecord {
+  /** 自增ID, 对应文档行号(行号 = id + 1, 跳过表头) */
+  id: number
+  /** A列: 游戏句柄 */
+  handle: string
+  /** C列: 封禁等级 */
+  ban_level: string
+  /** D列: 处罚原因 */
+  reason: string
+  /** E列: 处罚次数 */
+  count: string
+  /** F列: 审核员 */
+  auditor: string
+  /** G列: 审核时间 */
+  audit_time: string
+  /** 最近一次同步时间 */
   update_time: Date
 }
 
@@ -328,6 +352,20 @@ export function apply(ctx: Context, config: Config) {
     update_time: 'timestamp',
   }, {
     primary: 'user_id',
+  })
+
+  ctx.model.extend('ggcevo_ban_record', {
+    id: 'unsigned',
+    handle: 'string',
+    ban_level: 'string',
+    reason: 'string',
+    count: 'string',
+    auditor: 'string',
+    audit_time: 'string',
+    update_time: 'timestamp',
+  }, {
+    primary: 'id',
+    autoInc: true,
   })
 
   // ========== 地图检测定时任务 ==========
@@ -2103,17 +2141,22 @@ export function apply(ctx: Context, config: Config) {
       return `✅ 赎罪券使用成功！`;
     });
 
-  // ========== 腾讯文档应用级账号 API (https://docs.qq.com/open/document/app/oauth2/app_account_token.html) ==========
+  // ========== 腾讯文档 API (用户级/应用级账号双模式) ==========
+  // 用户级模式: 配置 client_id + access_token + open_id (通过扫码授权获取, 无需 client_secret)
+  // 应用级模式: 配置 client_id + client_secret (自动获取并刷新 token, 无需手动填 access_token)
 
   /** 应用级账号在令牌表中的固定标识 */
   const DOCS_APP_ACCOUNT_KEY = 'app_account'
 
+  /** 是否为用户级 Token 模式 (已手动配置 access_token + open_id) */
+  const isUserTokenMode = () => !!config.tencentDocsAccessToken && !!config.tencentDocsOpenId
+
   const isDocsConfigured = () => config.tencentDocsEnabled
     && !!config.tencentDocsClientId
-    && !!config.tencentDocsClientSecret
+    && (isUserTokenMode() || !!config.tencentDocsClientSecret)
 
   /**
-   * 腾讯文档应用级账号 Token 接口封装
+   * 应用级账号 Token 接口封装 (仅在应用级模式下使用)
    * - 获取应用级 Token: GET /oauth/v2/app-account-token
    * - 刷新 Token: GET /oauth/v2/token (grant_type=refresh_token)
    */
@@ -2142,18 +2185,58 @@ export function apply(ctx: Context, config: Config) {
   }
 
   /**
-   * 获取应用级账号有效令牌, 过期前 5 分钟自动使用 Refresh Token 刷新并落库; 无记录时自动获取
+   * 获取有效的腾讯文档令牌
+   * - 用户级模式: 直接返回配置的 access_token + open_id (无法自动刷新, 过期需手动更新)
+   * - 应用级模式: 过期前 5 分钟自动使用 Refresh Token 刷新并落库; 无记录时自动获取
    * @returns 令牌记录 (含 docs_user_id / access_token), 未配置或获取失败返回 null
    */
   const getValidDocsToken = async (): Promise<GgcEvoDocsToken | null> => {
+    // 用户级模式: 直接使用配置项中的 access_token / open_id
+    if (isUserTokenMode()) {
+      return {
+        user_id: DOCS_APP_ACCOUNT_KEY,
+        docs_user_id: config.tencentDocsOpenId,
+        access_token: config.tencentDocsAccessToken,
+        refresh_token: '',
+        expires_at: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000),  // 用户级模式无法自动判断过期, 设为1年后
+        update_time: new Date(),
+      }
+    }
+
+    // 应用级模式: 从数据库读取并自动刷新
     const [record] = await ctx.database.get('ggcevo_docs_token', { user_id: DOCS_APP_ACCOUNT_KEY })
     if (record && record.expires_at.getTime() > Date.now() + 5 * 60 * 1000) return record
+
+    /** 将 HTTP 错误对象转为可读字符串, 暴露腾讯文档返回的错误码/错误消息 */
+    const formatHttpError = (e: any): string => {
+      const parts: string[] = []
+      if (e?.name) parts.push(e.name)
+      if (e?.message) parts.push(e.message)
+      if (e?.response) {
+        parts.push(`HTTP ${e.response.status}`)
+        const body = e.response.data
+        if (body != null) parts.push(typeof body === 'string' ? body : JSON.stringify(body))
+      } else if (e?.code) {
+        parts.push(`code=${e.code}`)
+      }
+      return parts.join(' | ') || String(e)
+    }
+
     try {
-      // 优先使用 Refresh Token 刷新, 无记录或刷新回包异常时重新获取应用级 Token
-      const resp = record
-        ? await docsOAuth.refreshToken(record.refresh_token).catch(() => docsOAuth.getAppAccountToken())
-        : await docsOAuth.getAppAccountToken()
-      if (!resp?.access_token) return record || null
+      let resp: any
+      if (record) {
+        // 优先使用 Refresh Token 刷新, 失败则回退为重新获取应用级 Token (记录失败原因便于排查)
+        resp = await docsOAuth.refreshToken(record.refresh_token).catch((refreshErr) => {
+          ctx.logger('ggcevo').warn('刷新 Token 失败, 回退到重新获取应用级 Token: %s', formatHttpError(refreshErr))
+          return docsOAuth.getAppAccountToken()
+        })
+      } else {
+        resp = await docsOAuth.getAppAccountToken()
+      }
+      if (!resp?.access_token) {
+        ctx.logger('ggcevo').warn('应用级 Token 回包缺少 access_token: %o', resp)
+        return record || null
+      }
       await ctx.database.upsert('ggcevo_docs_token', [{
         user_id: DOCS_APP_ACCOUNT_KEY,
         docs_user_id: resp.user_id || record?.docs_user_id || '',
@@ -2165,7 +2248,7 @@ export function apply(ctx: Context, config: Config) {
       const [updated] = await ctx.database.get('ggcevo_docs_token', { user_id: DOCS_APP_ACCOUNT_KEY })
       return updated || null
     } catch (e) {
-      ctx.logger('ggcevo').warn('获取/刷新腾讯文档应用级 Token 失败: %o', e)
+      ctx.logger('ggcevo').warn('获取/刷新腾讯文档应用级 Token 失败: %s', formatHttpError(e))
       return record || null
     }
   }
@@ -2199,16 +2282,21 @@ export function apply(ctx: Context, config: Config) {
     return ctx.http.post<T>(url, form, { headers })
   }
 
-  // 查看应用级账号状态 (首次执行会自动获取应用级 Token)
-  ctx.command('腾讯文档/状态', '查看腾讯文档应用级账号状态')
+  // 查看腾讯文档状态 (显示当前模式与令牌信息)
+  ctx.command('腾讯文档/状态', '查看腾讯文档授权状态')
     .action(async () => {
       if (!isDocsConfigured()) return '❌ 腾讯文档功能未启用或配置不完整。'
       const token = await getValidDocsToken()
       if (!token) {
-        return '❌ 应用级账号 Token 获取失败, 请检查 Client ID / Client Secret 配置。'
+        return isUserTokenMode()
+          ? '❌ 用户级 Token 模式: 请检查 Access Token / Open ID 配置。'
+          : '❌ 应用级账号 Token 获取失败, 请检查 Client ID / Client Secret 配置。'
       }
+      const mode = isUserTokenMode() ? '用户级(扫码授权)' : '应用级账号(自动刷新)'
       return [
-        '📄 腾讯文档应用级账号状态',
+        '📄 腾讯文档授权状态',
+        `授权模式: ${mode}`,
+        `Client ID: ${config.tencentDocsClientId}`,
         `Open ID: ${token.docs_user_id}`,
         `令牌过期时间: ${toBeijingTime(token.expires_at.toISOString())}`,
         `最近更新: ${toBeijingTime(token.update_time.toISOString())}`,
@@ -2244,8 +2332,8 @@ export function apply(ctx: Context, config: Config) {
     return s.toLowerCase()
   }
 
-  /** 拉取封禁记录表 A:G 列全部数据 (自动按 1000 行分批, 跳过表头) */
-  const fetchBanRecords = async (): Promise<string[][]> => {
+  /** 从腾讯文档拉取封禁记录表 A:G 列全部数据 (自动按 1000 行分批, 跳过表头) */
+  const fetchBanRecordsFromDocs = async (): Promise<string[][]> => {
     const fileId = config.tencentDocsBanListFileId
     const sheetId = config.tencentDocsBanListSheetId
 
@@ -2287,7 +2375,72 @@ export function apply(ctx: Context, config: Config) {
     return allRows
   }
 
-  // 查询当前绑定句柄的封禁记录 (每页1条, 支持翻页)
+  /**
+   * 同步封禁记录到数据库: 全量拉取文档数据 → 清空旧数据 → 写入新数据
+   * 自增 id 从 1 开始, 对应文档第 2 行(首条数据), id=N 对应文档第 N+1 行
+   * 每次同步为全量替换: 文档新增/修改/删除的行均会被同步到数据库
+   * @returns 同步的记录条数
+   */
+  const syncBanRecords = async (): Promise<number> => {
+    const rows = await fetchBanRecordsFromDocs()
+    const now = new Date()
+    const records = rows.map((r, i) => ({
+      id: i + 1,  // 自增 id, 对应文档行号 (id=1 → 文档第2行)
+      handle: r[0] || '',
+      ban_level: r[2] || '',
+      reason: r[3] || '',
+      count: r[4] || '',
+      auditor: r[5] || '',
+      audit_time: r[6] || '',
+      update_time: now,
+    }))
+
+    // 统计旧记录数, 用于日志输出同步变化
+    const oldRecords = await ctx.database.get('ggcevo_ban_record', {}, { fields: ['id'] })
+    const oldCount = oldRecords.length
+
+    // 全量替换: 清空旧数据后写入新数据, 保证 id 与文档行号严格对应
+    await ctx.database.remove('ggcevo_ban_record', {})
+    if (records.length > 0) {
+      await ctx.database.upsert('ggcevo_ban_record', records)
+    }
+
+    const diff = records.length - oldCount
+    ctx.logger('ggcevo').info(
+      '封禁记录全量同步完成: 旧 %d 条 → 新 %d 条 (%s%d)',
+      oldCount, records.length, diff >= 0 ? '+' : '', diff,
+    )
+    return records.length
+  }
+
+  // 每小时定时同步封禁记录 (启动后延迟 5 秒首次同步)
+  if (isDocsConfigured() && config.tencentDocsBanListFileId && config.tencentDocsBanListSheetId) {
+    const syncTask = async () => {
+      try {
+        const count = await syncBanRecords()
+        ctx.logger('ggcevo').info('封禁记录同步完成, 共 %d 条', count)
+      } catch (e) {
+        ctx.logger('ggcevo').warn('封禁记录定时同步失败: %o', e)
+      }
+    }
+    ctx.setTimeout(syncTask, 5000)
+    ctx.setInterval(syncTask, 60 * 60 * 1000)
+  }
+
+  // 立即从腾讯文档同步封禁记录到数据库
+  ctx.command('ggcevo/同步封禁记录', { authority: 3 })
+    .action(async () => {
+      if (!isDocsConfigured()) return '❌ 腾讯文档功能未启用或配置不完整。'
+      try {
+        const count = await syncBanRecords()
+        return `✅ 封禁记录同步完成, 共 ${count} 条。`
+      } catch (e: any) {
+        ctx.logger('ggcevo').warn('手动同步封禁记录失败: %o', e)
+        return `❌ 同步失败: ${e?.message || e}`
+      }
+    })
+
+  // 查询当前绑定句柄的封禁记录 (从数据库读取, 每页1条, 支持翻页)
   ctx.command('ggcevo/封禁记录')
     .action(async (argv) => {
       if (!isDocsConfigured()) return '❌ 腾讯文档功能未启用或配置不完整。'
@@ -2298,37 +2451,45 @@ export function apply(ctx: Context, config: Config) {
         return '🔒 需要先绑定游戏句柄。\n💡 使用 `绑定句柄` 命令进行绑定。'
       }
 
-      let records: string[][]
-      try {
-        const all = await fetchBanRecords()
-        const target = normalizeHandle(handle)
-        records = all.filter(r => r[0] && normalizeHandle(r[0]) === target)
-      } catch (e: any) {
-        ctx.logger('ggcevo').warn('查询封禁记录失败: %o', e)
-        return `❌ 查询封禁记录失败: ${e?.message || e}`
+      const [lastSync] = await ctx.database.get('ggcevo_ban_record', {}, { limit: 1 })
+      if (!lastSync) {
+        return '⚠️ 封禁记录尚未同步, 请稍后再试或联系管理员。'
       }
+      const syncTime = lastSync.update_time
+
+      // 从数据库查询并按句柄标准化匹配 (按 id 升序, 即文档行号顺序)
+      const allRecords = await ctx.database.get('ggcevo_ban_record', {}, { sort: { id: 'asc' } })
+      const target = normalizeHandle(handle)
+      const records = allRecords.filter(r => r.handle && normalizeHandle(r.handle) === target)
 
       if (records.length === 0) {
-        return `✅ 句柄 ${handle} 暂无封禁记录。`
+        return [
+          `✅ 句柄 ${handle} 暂无封禁记录。`,
+          `📊 数据最近同步: ${toBeijingTime(syncTime.toISOString())}`,
+        ].join('\n')
       }
 
       const formatRecord = (idx: number): string => {
         const r = records[idx]
         return [
           `📋 封禁记录 (${idx + 1}/${records.length})`,
-          `句柄: ${r[0]}`,
-          `封禁等级: ${r[2] || '-'}`,
-          `处罚原因: ${r[3] || '-'}`,
-          `处罚次数: ${r[4] || '-'}`,
-          `审核员: ${r[5] || '-'}`,
-          `审核时间: ${r[6] || '-'}`,
+          `文档行号: ${r.id + 1} 行`,  // id 对应文档行号 (跳过表头)
+          `句柄: ${r.handle}`,
+          `封禁等级: ${r.ban_level || '-'}`,
+          `处罚原因: ${r.reason || '-'}`,
+          `处罚次数: ${r.count || '-'}`,
+          `审核员: ${r.auditor || '-'}`,
+          `审核时间: ${r.audit_time || '-'}`,
           '',
           '💡 回复 "下一页"/"上一页"/页码数字 翻页, 或 "退出" 结束',
         ].join('\n')
       }
 
       let page = 0
-      await session.send(formatRecord(page))
+      await session.send([
+        formatRecord(page),
+        `📊 数据最近同步: ${toBeijingTime(syncTime.toISOString())}`,
+      ].join('\n'))
       while (true) {
         const input = await session.prompt(60000)
         if (!input) break
