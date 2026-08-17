@@ -2353,6 +2353,15 @@ export function apply(ctx: Context, config: Config) {
     }
     if (v.link) return v.link.text || v.link.url || ''
     if (v.location) return v.location.name || ''
+    if (v.select) {
+      // 单选/多选下拉框: cellValue.select.value 为已选选项ID数组,
+      // cellValue.select.options 为全部选项(含 id/text), 按 id 匹配取 text
+      const sel = v.select
+      const ids: string[] = Array.isArray(sel.value) ? sel.value.map(String) : []
+      const opts: any[] = Array.isArray(sel.options) ? sel.options : []
+      const texts = ids.map(id => opts.find(o => String(o.id) === String(id))?.text || '')
+      return texts.filter(Boolean).join('、')
+    }
     return ''
   }
 
