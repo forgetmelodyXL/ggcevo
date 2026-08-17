@@ -41,6 +41,8 @@ npm install koishi-plugin-ggcevo
 | `tencentDocsOpenId` | `string` | `''` | Open ID（**用户级模式必填**，与 Access Token 同时获取） |
 | `tencentDocsBanListFileId` | `string` | `DTVdYZVBDdFhEUkp6` | 封禁记录在线表格文件ID（短ID或完整ID） |
 | `tencentDocsBanListSheetId` | `string` | `BB08J2` | 封禁记录工作表ID（表格URL中 `tab` 参数） |
+| `tencentDocsAdminWelfareFileId` | `string` | `DVGRhUUpXUVRJVVJs` | 管理员福利在线表格文件ID（短ID或完整ID，A列QQ号/B列句柄） |
+| `tencentDocsAdminWelfareSheetId` | `string` | `BB08J2` | 管理员福利工作表ID（表格URL中 `tab` 参数） |
 
 **授权模式说明：**
 - **用户级模式**（推荐用于无 `Client Secret` 的场景）：填写 `tencentDocsClientId` + `tencentDocsAccessToken` + `tencentDocsOpenId`，三者均通过腾讯文档开放平台扫码授权流程获取。Token 过期后需重新获取并在控制台更新。
@@ -63,7 +65,7 @@ npm install koishi-plugin-ggcevo
 
 | 指令 | 别名 | 权限 | 说明 |
 | --- | --- | --- | --- |
-| `签到` | — | — | 每日签到，获取奖励并发放签到券/补签券等 |
+| `签到` | — | — | 每日签到，获取奖励并发放签到券/补签券等。每月首次签到时，若签到者QQ号与句柄同时匹配管理员福利文档记录，额外发放 50 咕咕币津贴 |
 | `兑换 <name>` | — | — | 使用兑换券兑换指定物品。消耗兑换券数量随物品品质而定（T3皮肤=3、T2=4、T1=5、T3宠物=3、T2=4、T1=5、T0宠物=6、入场特效=5、角色冠名权=10、赎罪券=2） |
 | `抽奖` | — | — | 抽奖。选项：`-p <poolId>` 奖池ID，`-c <count>` 抽奖次数。各池消耗：金币池=100金币/次、普通池=1咕咕币/次、皮肤池/宠物池=3兑换券/次 |
 | `背包` | — | — | 查看自己的物品背包 |
@@ -79,6 +81,7 @@ npm install koishi-plugin-ggcevo
 | `使用 <name>` | — | — | 使用指定物品（如赎罪券等） |
 | `封禁记录` | — | — | 查询当前绑定句柄在腾讯文档封禁记录表中的全部记录，每页显示 1 条，支持翻页（回复"下一页/上一页/页码/退出"） |
 | `同步封禁记录` | — | 3 | 立即从腾讯文档拉取全量数据并写入数据库（管理员指令） |
+| `同步管理员福利` | — | 3 | 立即从腾讯文档拉取管理员福利表（A列QQ号/B列句柄）全量数据并写入数据库（管理员指令） |
 
 ### 腾讯文档
 
@@ -123,8 +126,28 @@ npm install koishi-plugin-ggcevo
 - `ggcevo_activity_claim_log` — 活动领取记录（主键 `activity_id` + `user_id`）
 - `ggcevo_docs_token` — 腾讯文档令牌缓存（应用级模式使用，主键 `user_id`，应用级账号固定为 `app_account`）
 - `ggcevo_ban_record` — 封禁记录（主键 `id` 自增，对应文档行号 `id+1`，每小时全量同步）
+- `ggcevo_admin_welfare` — 管理员福利（主键 `id` 自增，对应文档行号 `id+1`，每小时全量同步；A列QQ号/B列句柄）
 
 ## 更新日志
+
+### v1.0.7
+
+新增**管理员福利**功能，签到每月津贴改为基于管理员福利文档数据库匹配。
+
+**新增功能：**
+- **管理员福利同步**：每小时自动从腾讯文档在线表格全量拉取管理员福利数据写入数据库（启动后延迟 5 秒首次同步），采用全量替换策略保证 `id` 与文档行号严格对应
+- **手动同步**：`同步管理员福利` 指令（管理员权限 3）立即触发同步
+- **签到每月津贴改写**：原通过 QQ 群管理员身份判断发放 50 咕咕币津贴，现改为从管理员福利数据库读取——签到者 **QQ号与游戏句柄必须同时匹配** 文档记录，且每月首次签到才发放 50 咕咕币津贴
+
+**新增配置项：**
+- `tencentDocsAdminWelfareFileId`（默认 `DVGRhUUpXUVRJVVJs`）
+- `tencentDocsAdminWelfareSheetId`（默认 `BB08J2`）
+
+**新增数据库表：**
+- `ggcevo_admin_welfare` — 管理员福利（主键自增 `id`，对应文档行号 `id+1`；字段：`qq`、`handle`、`update_time`）
+
+**表格结构要求：**
+- A列：QQ号 / B列：游戏句柄
 
 ### v1.0.6
 

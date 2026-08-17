@@ -14,6 +14,8 @@ export interface Config {
   tencentDocsOpenId: string
   tencentDocsBanListFileId: string
   tencentDocsBanListSheetId: string
+  tencentDocsAdminWelfareFileId: string
+  tencentDocsAdminWelfareSheetId: string
 }
 
 export const Config: Schema<Config> = Schema.object({
@@ -28,6 +30,8 @@ export const Config: Schema<Config> = Schema.object({
   tencentDocsOpenId: Schema.string().description('腾讯文档 Open ID(用户级模式必填, 与 Access Token 同时获取)').default(''),
   tencentDocsBanListFileId: Schema.string().description('封禁记录在线表格的文件ID(短ID或完整ID)').default('DTVdYZVBDdFhEUkp6'),
   tencentDocsBanListSheetId: Schema.string().description('封禁记录工作表ID(表格URL中tab参数)').default('BB08J2'),
+  tencentDocsAdminWelfareFileId: Schema.string().description('管理员福利在线表格的文件ID(短ID或完整ID, A列QQ号/B列句柄)').default('DVGRhUUpXUVRJVVJs'),
+  tencentDocsAdminWelfareSheetId: Schema.string().description('管理员福利工作表ID(表格URL中tab参数)').default('BB08J2'),
 })
 
 export const inject = {
@@ -99,6 +103,7 @@ declare module 'koishi' {
     ggcevo_activity_claim_log: ActivityClaimLog
     ggcevo_docs_token: GgcEvoDocsToken
     ggcevo_ban_record: GgcEvoBanRecord
+    ggcevo_admin_welfare: GgcEvoAdminWelfare
   }
 }
 
@@ -144,6 +149,17 @@ export interface GgcEvoBanRecord {
   auditor: string
   /** G列: 审核时间 */
   audit_time: string
+  /** 最近一次同步时间 */
+  update_time: Date
+}
+
+export interface GgcEvoAdminWelfare {
+  /** 自增ID, 对应文档行号(行号 = id + 1, 跳过表头) */
+  id: number
+  /** A列: QQ号 */
+  qq: string
+  /** B列: 游戏句柄 */
+  handle: string
   /** 最近一次同步时间 */
   update_time: Date
 }
@@ -362,6 +378,16 @@ export function apply(ctx: Context, config: Config) {
     count: 'string',
     auditor: 'string',
     audit_time: 'string',
+    update_time: 'timestamp',
+  }, {
+    primary: 'id',
+    autoInc: true,
+  })
+
+  ctx.model.extend('ggcevo_admin_welfare', {
+    id: 'unsigned',
+    qq: 'string',
+    handle: 'string',
     update_time: 'timestamp',
   }, {
     primary: 'id',
@@ -808,10 +834,16 @@ export function apply(ctx: Context, config: Config) {
         lastAllowanceMonth = summary.last_allowance_month || 0;
       }
 
-      const memberInfo = session.event?.member?.roles;
-      const isAdmin = !memberInfo?.some(role => role.name === "member" || role.id === "member");
+      // 管理员福利: 从管理员福利数据库读取, 签到者QQ号与句柄必须同时匹配文档记录
+      const qq = String(session.userId || '')
+      const normalizedHandle = normalizeHandle(handle)
+      const welfareRecords = await ctx.database.get('ggcevo_admin_welfare', {})
+      const isWelfareMember = welfareRecords.some(r =>
+        String(r.qq || '').trim() === qq.trim() &&
+        r.handle && normalizeHandle(r.handle) === normalizedHandle
+      )
 
-      if (isAdmin && lastAllowanceMonth !== currentMonth) {
+      if (isWelfareMember && lastAllowanceMonth !== currentMonth) {
         monthlyAllowance = 50;
         gugubReward += monthlyAllowance;
         lastAllowanceMonth = currentMonth;
@@ -2283,7 +2315,7 @@ export function apply(ctx: Context, config: Config) {
   }
 
   // 查看腾讯文档状态 (显示当前模式与令牌信息)
-  ctx.command('腾讯文档/状态', '查看腾讯文档授权状态')
+  ctx.command('腾讯文档/授权状态', '查看腾讯文档授权状态')
     .action(async () => {
       if (!isDocsConfigured()) return '❌ 腾讯文档功能未启用或配置不完整。'
       const token = await getValidDocsToken()
@@ -2413,6 +2445,91 @@ export function apply(ctx: Context, config: Config) {
     return records.length
   }
 
+  // ========== 管理员福利记录同步 (基于腾讯文档在线表格 V3 接口) ==========
+  // 表格结构: A列QQ号 / B列游戏句柄
+
+  /** 从腾讯文档拉取管理员福利表 A:B 列全部数据 (自动按 1000 行分批, 跳过表头) */
+  const fetchAdminWelfareFromDocs = async (): Promise<string[][]> => {
+    const fileId = config.tencentDocsAdminWelfareFileId
+    const sheetId = config.tencentDocsAdminWelfareSheetId
+
+    const meta: any = await docsApiRequest('GET', `/spreadsheet/v3/files/${fileId}`, { concise: 1 })
+    const metaOk = meta?.code === 0 || meta?.ret === 0
+    if (metaOk === false && meta?.code != null) {
+      throw new Error(`查询工作表信息失败: ${meta.message || '未知错误'}(code=${meta.code})`)
+    }
+    const props = meta?.data?.properties || meta?.properties || []
+    const sheetInfo = props.find((s: any) => s.sheetId === sheetId)
+    const rowTotal: number = Number(sheetInfo?.rowTotal) || 0
+    if (rowTotal <= 1) return []
+
+    const allRows: string[][] = []
+    const batchSize = 1000
+    for (let start = 2; start <= rowTotal; start += batchSize) {
+      const end = Math.min(start + batchSize - 1, rowTotal)
+      const resp: any = await docsApiRequest('GET', `/spreadsheet/v3/files/${fileId}/${sheetId}/A${start}:B${end}`)
+      const respOk = resp?.code === 0 || resp?.ret === 0
+      if (respOk === false && resp?.code != null) {
+        throw new Error(`查询范围 A${start}:B${end} 失败: ${resp.message || '未知错误'}(code=${resp.code})`)
+      }
+      const rows = resp?.data?.gridData?.rows || resp?.gridData?.rows || []
+      for (const row of rows) {
+        const cells = row.values || []
+        allRows.push([
+          extractCellText(cells[0]),  // A: QQ号
+          extractCellText(cells[1]),  // B: 游戏句柄
+        ])
+      }
+    }
+    return allRows
+  }
+
+  /**
+   * 同步管理员福利记录到数据库: 全量拉取文档数据 → 清空旧数据 → 写入新数据
+   * 自增 id 从 1 开始, 对应文档第 2 行(首条数据), id=N 对应文档第 N+1 行
+   * 每次同步为全量替换: 文档新增/修改/删除的行均会被同步到数据库
+   * @returns 同步的记录条数
+   */
+  const syncAdminWelfare = async (): Promise<number> => {
+    const rows = await fetchAdminWelfareFromDocs()
+    const now = new Date()
+    const records = rows.map((r, i) => ({
+      id: i + 1,  // 自增 id, 对应文档行号 (id=1 → 文档第2行)
+      qq: r[0] || '',
+      handle: r[1] || '',
+      update_time: now,
+    }))
+
+    const oldRecords = await ctx.database.get('ggcevo_admin_welfare', {}, { fields: ['id'] })
+    const oldCount = oldRecords.length
+
+    await ctx.database.remove('ggcevo_admin_welfare', {})
+    if (records.length > 0) {
+      await ctx.database.upsert('ggcevo_admin_welfare', records)
+    }
+
+    const diff = records.length - oldCount
+    ctx.logger('ggcevo').info(
+      '管理员福利全量同步完成: 旧 %d 条 → 新 %d 条 (%s%d)',
+      oldCount, records.length, diff >= 0 ? '+' : '', diff,
+    )
+    return records.length
+  }
+
+  // 每小时定时同步管理员福利记录 (启动后延迟 5 秒首次同步)
+  if (isDocsConfigured() && config.tencentDocsAdminWelfareFileId && config.tencentDocsAdminWelfareSheetId) {
+    const syncTask = async () => {
+      try {
+        const count = await syncAdminWelfare()
+        ctx.logger('ggcevo').info('管理员福利记录同步完成, 共 %d 条', count)
+      } catch (e) {
+        ctx.logger('ggcevo').warn('管理员福利记录定时同步失败: %o', e)
+      }
+    }
+    ctx.setTimeout(syncTask, 5000)
+    ctx.setInterval(syncTask, 60 * 60 * 1000)
+  }
+
   // 每小时定时同步封禁记录 (启动后延迟 5 秒首次同步)
   if (isDocsConfigured() && config.tencentDocsBanListFileId && config.tencentDocsBanListSheetId) {
     const syncTask = async () => {
@@ -2436,6 +2553,19 @@ export function apply(ctx: Context, config: Config) {
         return `✅ 封禁记录同步完成, 共 ${count} 条。`
       } catch (e: any) {
         ctx.logger('ggcevo').warn('手动同步封禁记录失败: %o', e)
+        return `❌ 同步失败: ${e?.message || e}`
+      }
+    })
+
+  // 立即从腾讯文档同步管理员福利记录到数据库
+  ctx.command('ggcevo/同步管理员福利', { authority: 3 })
+    .action(async () => {
+      if (!isDocsConfigured()) return '❌ 腾讯文档功能未启用或配置不完整。'
+      try {
+        const count = await syncAdminWelfare()
+        return `✅ 管理员福利同步完成, 共 ${count} 条。`
+      } catch (e: any) {
+        ctx.logger('ggcevo').warn('手动同步管理员福利失败: %o', e)
         return `❌ 同步失败: ${e?.message || e}`
       }
     })
