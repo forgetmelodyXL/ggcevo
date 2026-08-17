@@ -136,7 +136,7 @@ export interface GgcEvoBanRecord {
   handle: string
   /** C列: 封禁等级 */
   ban_level: string
-  /** D列: 处罚原因 */
+  /** D列: 处罚原因 (text 类型, 支持长文本) */
   reason: string
   /** E列: 处罚次数 */
   count: string
@@ -358,7 +358,7 @@ export function apply(ctx: Context, config: Config) {
     id: 'unsigned',
     handle: 'string',
     ban_level: 'string',
-    reason: 'string',
+    reason: 'text',
     count: 'string',
     auditor: 'string',
     audit_time: 'string',

@@ -126,6 +126,13 @@ npm install koishi-plugin-ggcevo
 
 ## 更新日志
 
+### v1.0.6
+
+修复封禁记录同步时长文本写入失败的问题。
+
+- **修复**：`ggcevo_ban_record` 表 `reason`（处罚原因）字段类型由 `string`（VARCHAR(255)）改为 `text`（TEXT，最大 65535 字符），避免处罚原因过长时触发 `ER_DATA_TOO_LONG` 错误
+- 类型变更由 minato 自动执行 `ALTER TABLE`，已有数据不受影响，直接重启即可生效
+
 ### v1.0.5
 
 新增**腾讯文档封禁记录查询**功能，基于腾讯文档开放平台 V3 在线表格接口实现。
