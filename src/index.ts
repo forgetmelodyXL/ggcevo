@@ -7,6 +7,11 @@ export interface Config {
   mapMonitorGroups: string[]
   mapMonitorMapIds: number[]
   mapMonitorApiUrl: string
+  tencentDocsEnabled: boolean
+  tencentDocsClientId: string
+  tencentDocsClientSecret: string
+  tencentDocsBanListFileId: string
+  tencentDocsBanListSheetId: string
 }
 
 export const Config: Schema<Config> = Schema.object({
@@ -14,6 +19,11 @@ export const Config: Schema<Config> = Schema.object({
   mapMonitorGroups: Schema.array(Schema.string()).description('地图检测广播的群组ID列表').default([]),
   mapMonitorMapIds: Schema.array(Schema.number()).description('需要检测的地图ID列表').default([]),
   mapMonitorApiUrl: Schema.string().description('地图检测API地址').default('https://server.dreamprotocol.info:13085/mapmonitor/maps'),
+  tencentDocsEnabled: Schema.boolean().description('是否启用腾讯文档(应用级账号)功能').default(false),
+  tencentDocsClientId: Schema.string().description('腾讯文档开放平台应用 Client ID').default(''),
+  tencentDocsClientSecret: Schema.string().description('腾讯文档开放平台应用 Client Secret').role('secret').default(''),
+  tencentDocsBanListFileId: Schema.string().description('封禁记录在线表格的文件ID(短ID或完整ID)').default('DTVdYZVBDdFhEUkp6'),
+  tencentDocsBanListSheetId: Schema.string().description('封禁记录工作表ID(表格URL中tab参数)').default('BB08J2'),
 })
 
 export const inject = {
@@ -83,6 +93,7 @@ declare module 'koishi' {
     ggcevo_exchange_log: ExchangeLog
     ggcevo_activity: Activity
     ggcevo_activity_claim_log: ActivityClaimLog
+    ggcevo_docs_token: GgcEvoDocsToken
   }
 }
 
@@ -100,6 +111,17 @@ export interface GgcEvoMapMonitorState {
   mapId: number
   lastState: string
   lastCheckedAt: Date
+}
+
+export interface GgcEvoDocsToken {
+  /** 账号标识, 应用级账号固定为 'app_account' */
+  user_id: string
+  /** 应用级账号 Open ID */
+  docs_user_id: string
+  access_token: string
+  refresh_token: string
+  expires_at: Date
+  update_time: Date
 }
 
 export interface Backpack {
@@ -295,6 +317,17 @@ export function apply(ctx: Context, config: Config) {
     claimed_at: 'timestamp',
   }, {
     primary: ['activity_id', 'user_id']
+  })
+
+  ctx.model.extend('ggcevo_docs_token', {
+    user_id: 'string',
+    docs_user_id: 'string',
+    access_token: 'string',
+    refresh_token: 'string',
+    expires_at: 'timestamp',
+    update_time: 'timestamp',
+  }, {
+    primary: 'user_id',
   })
 
   // ========== 地图检测定时任务 ==========
@@ -2069,6 +2102,256 @@ export function apply(ctx: Context, config: Config) {
 
       return `✅ 赎罪券使用成功！`;
     });
+
+  // ========== 腾讯文档应用级账号 API (https://docs.qq.com/open/document/app/oauth2/app_account_token.html) ==========
+
+  /** 应用级账号在令牌表中的固定标识 */
+  const DOCS_APP_ACCOUNT_KEY = 'app_account'
+
+  const isDocsConfigured = () => config.tencentDocsEnabled
+    && !!config.tencentDocsClientId
+    && !!config.tencentDocsClientSecret
+
+  /**
+   * 腾讯文档应用级账号 Token 接口封装
+   * - 获取应用级 Token: GET /oauth/v2/app-account-token
+   * - 刷新 Token: GET /oauth/v2/token (grant_type=refresh_token)
+   */
+  const docsOAuth = {
+    /** 获取应用级账号 Access Token / Refresh Token (应用级账号为应用全局唯一, 无需用户授权) */
+    async getAppAccountToken() {
+      return ctx.http.get('https://docs.qq.com/oauth/v2/app-account-token', {
+        params: {
+          client_id: config.tencentDocsClientId,
+          client_secret: config.tencentDocsClientSecret,
+        },
+      })
+    },
+
+    /** 使用 Refresh Token 刷新 Access Token (Refresh Token 有效期 1 年, 回包不含新 Refresh Token) */
+    async refreshToken(refreshToken: string) {
+      return ctx.http.get('https://docs.qq.com/oauth/v2/token', {
+        params: {
+          client_id: config.tencentDocsClientId,
+          client_secret: config.tencentDocsClientSecret,
+          grant_type: 'refresh_token',
+          refresh_token: refreshToken,
+        },
+      })
+    },
+  }
+
+  /**
+   * 获取应用级账号有效令牌, 过期前 5 分钟自动使用 Refresh Token 刷新并落库; 无记录时自动获取
+   * @returns 令牌记录 (含 docs_user_id / access_token), 未配置或获取失败返回 null
+   */
+  const getValidDocsToken = async (): Promise<GgcEvoDocsToken | null> => {
+    const [record] = await ctx.database.get('ggcevo_docs_token', { user_id: DOCS_APP_ACCOUNT_KEY })
+    if (record && record.expires_at.getTime() > Date.now() + 5 * 60 * 1000) return record
+    try {
+      // 优先使用 Refresh Token 刷新, 无记录或刷新回包异常时重新获取应用级 Token
+      const resp = record
+        ? await docsOAuth.refreshToken(record.refresh_token).catch(() => docsOAuth.getAppAccountToken())
+        : await docsOAuth.getAppAccountToken()
+      if (!resp?.access_token) return record || null
+      await ctx.database.upsert('ggcevo_docs_token', [{
+        user_id: DOCS_APP_ACCOUNT_KEY,
+        docs_user_id: resp.user_id || record?.docs_user_id || '',
+        access_token: resp.access_token,
+        refresh_token: resp.refresh_token || record?.refresh_token || '',
+        expires_at: new Date(Date.now() + (resp.expires_in || 0) * 1000),
+        update_time: new Date(),
+      }])
+      const [updated] = await ctx.database.get('ggcevo_docs_token', { user_id: DOCS_APP_ACCOUNT_KEY })
+      return updated || null
+    } catch (e) {
+      ctx.logger('ggcevo').warn('获取/刷新腾讯文档应用级 Token 失败: %o', e)
+      return record || null
+    }
+  }
+
+  /**
+   * 调用腾讯文档 OpenAPI 通用请求 (鉴权参数位于请求头: Access-Token / Client-Id / Open-Id)
+   * @param method 请求方式
+   * @param path   接口路径, 如 '/drive/v2/files'
+   * @param data   GET 时作为查询参数, 其他方式作为表单参数
+   * @example docsApiRequest('POST', '/drive/v2/files', { title: 'Hello', type: 'doc' })
+   */
+  const docsApiRequest = async <T = any>(
+    method: 'GET' | 'POST' | 'PUT' | 'DELETE',
+    path: string,
+    data?: Record<string, any>,
+  ): Promise<T> => {
+    const token = await getValidDocsToken()
+    if (!token) throw new Error('腾讯文档应用级账号不可用, 请检查插件配置(Client ID / Client Secret)')
+    const url = `https://docs.qq.com/openapi${path}`
+    const headers: Record<string, string> = {
+      'Access-Token': token.access_token,
+      'Client-Id': config.tencentDocsClientId,
+      'Open-Id': token.docs_user_id,
+    }
+    if (method === 'GET' || method === 'DELETE') {
+      return ctx.http.get<T>(url, { headers, params: data })
+    }
+    headers['Content-Type'] = 'application/x-www-form-urlencoded'
+    const form = new URLSearchParams(data || {})
+    if (method === 'PUT') return ctx.http.put<T>(url, form, { headers })
+    return ctx.http.post<T>(url, form, { headers })
+  }
+
+  // 查看应用级账号状态 (首次执行会自动获取应用级 Token)
+  ctx.command('腾讯文档/状态', '查看腾讯文档应用级账号状态')
+    .action(async () => {
+      if (!isDocsConfigured()) return '❌ 腾讯文档功能未启用或配置不完整。'
+      const token = await getValidDocsToken()
+      if (!token) {
+        return '❌ 应用级账号 Token 获取失败, 请检查 Client ID / Client Secret 配置。'
+      }
+      return [
+        '📄 腾讯文档应用级账号状态',
+        `Open ID: ${token.docs_user_id}`,
+        `令牌过期时间: ${toBeijingTime(token.expires_at.toISOString())}`,
+        `最近更新: ${toBeijingTime(token.update_time.toISOString())}`,
+      ].join('\n')
+    })
+
+  // ========== 封禁记录查询 (基于腾讯文档在线表格 V3 接口) ==========
+  // 表格结构: A句柄 / C封禁等级 / D处罚原因 / E处罚次数 / F审核员 / G审核时间
+
+  /** 提取单元格可读文本 (支持 text/number/time/link/location 等 CellValue 类型) */
+  const extractCellText = (cell: any): string => {
+    if (!cell?.cellValue) return ''
+    const v = cell.cellValue
+    if (v.text != null) return String(v.text)
+    if (v.number != null) return String(v.number)
+    if (v.time) {
+      const t = v.time
+      const pad = (n: number) => String(n ?? 0).padStart(2, '0')
+      const date = `${t.year ?? ''}-${pad(t.month)}-${pad(t.day)}`.replace(/^-+/, '')
+      const time = `${pad(t.hour)}:${pad(t.minute)}:${pad(t.second)}`
+      return t.hour != null ? `${date} ${time}` : date
+    }
+    if (v.link) return v.link.text || v.link.url || ''
+    if (v.location) return v.location.name || ''
+    return ''
+  }
+
+  /** 标准化句柄为 5-S2-1-1234567 格式以便比较, 无法识别时返回 trim 后小写原值 */
+  const normalizeHandle = (raw: string): string => {
+    const s = (raw || '').trim()
+    const m = s.match(/^([1235])-s2-([12])-(\d+)$/i)
+    if (m) return `${m[1]}-S2-${m[2]}-${m[3]}`
+    return s.toLowerCase()
+  }
+
+  /** 拉取封禁记录表 A:G 列全部数据 (自动按 1000 行分批, 跳过表头) */
+  const fetchBanRecords = async (): Promise<string[][]> => {
+    const fileId = config.tencentDocsBanListFileId
+    const sheetId = config.tencentDocsBanListSheetId
+
+    // 1. 查询工作表元数据获取已使用行数 (GET /openapi/spreadsheet/v3/files/{fileId}?concise=1)
+    const meta: any = await docsApiRequest('GET', `/spreadsheet/v3/files/${fileId}`, { concise: 1 })
+    const metaOk = meta?.code === 0 || meta?.ret === 0
+    if (metaOk === false && meta?.code != null) {
+      throw new Error(`查询工作表信息失败: ${meta.message || '未知错误'}(code=${meta.code})`)
+    }
+    const props = meta?.data?.properties || meta?.properties || []
+    const sheetInfo = props.find((s: any) => s.sheetId === sheetId)
+    const rowTotal: number = Number(sheetInfo?.rowTotal) || 0
+    if (rowTotal <= 1) return []
+
+    // 2. 分批范围查询 (GET /openapi/spreadsheet/v3/files/{fileId}/{sheetId}/{range}, 单次行数 <=1000)
+    const allRows: string[][] = []
+    const batchSize = 1000
+    for (let start = 2; start <= rowTotal; start += batchSize) {
+      const end = Math.min(start + batchSize - 1, rowTotal)
+      const resp: any = await docsApiRequest('GET', `/spreadsheet/v3/files/${fileId}/${sheetId}/A${start}:G${end}`)
+      const respOk = resp?.code === 0 || resp?.ret === 0
+      if (respOk === false && resp?.code != null) {
+        throw new Error(`查询范围 A${start}:G${end} 失败: ${resp.message || '未知错误'}(code=${resp.code})`)
+      }
+      const rows = resp?.data?.gridData?.rows || resp?.gridData?.rows || []
+      for (const row of rows) {
+        const cells = row.values || []
+        allRows.push([
+          extractCellText(cells[0]),  // A: 句柄
+          extractCellText(cells[1]),  // B: (未使用)
+          extractCellText(cells[2]),  // C: 封禁等级
+          extractCellText(cells[3]),  // D: 处罚原因
+          extractCellText(cells[4]),  // E: 处罚次数
+          extractCellText(cells[5]),  // F: 审核员
+          extractCellText(cells[6]),  // G: 审核时间
+        ])
+      }
+    }
+    return allRows
+  }
+
+  // 查询当前绑定句柄的封禁记录 (每页1条, 支持翻页)
+  ctx.command('ggcevo/封禁记录')
+    .action(async (argv) => {
+      if (!isDocsConfigured()) return '❌ 腾讯文档功能未启用或配置不完整。'
+      const session = argv.session
+
+      const handle = await getHandle(session)
+      if (!handle) {
+        return '🔒 需要先绑定游戏句柄。\n💡 使用 `绑定句柄` 命令进行绑定。'
+      }
+
+      let records: string[][]
+      try {
+        const all = await fetchBanRecords()
+        const target = normalizeHandle(handle)
+        records = all.filter(r => r[0] && normalizeHandle(r[0]) === target)
+      } catch (e: any) {
+        ctx.logger('ggcevo').warn('查询封禁记录失败: %o', e)
+        return `❌ 查询封禁记录失败: ${e?.message || e}`
+      }
+
+      if (records.length === 0) {
+        return `✅ 句柄 ${handle} 暂无封禁记录。`
+      }
+
+      const formatRecord = (idx: number): string => {
+        const r = records[idx]
+        return [
+          `📋 封禁记录 (${idx + 1}/${records.length})`,
+          `句柄: ${r[0]}`,
+          `封禁等级: ${r[2] || '-'}`,
+          `处罚原因: ${r[3] || '-'}`,
+          `处罚次数: ${r[4] || '-'}`,
+          `审核员: ${r[5] || '-'}`,
+          `审核时间: ${r[6] || '-'}`,
+          '',
+          '💡 回复 "下一页"/"上一页"/页码数字 翻页, 或 "退出" 结束',
+        ].join('\n')
+      }
+
+      let page = 0
+      await session.send(formatRecord(page))
+      while (true) {
+        const input = await session.prompt(60000)
+        if (!input) break
+        const cmd = input.trim()
+        if (/^(退出|exit|q|end)$/i.test(cmd)) break
+        if (/^(下一页|下页|next|n)$/i.test(cmd)) {
+          if (page < records.length - 1) { page++; await session.send(formatRecord(page)) }
+          else await session.send('已是最后一页。回复 "上一页" 或 "退出"。')
+        } else if (/^(上一页|上页|prev|p|上一个)$/i.test(cmd)) {
+          if (page > 0) { page--; await session.send(formatRecord(page)) }
+          else await session.send('已是第一页。回复 "下一页" 或 "退出"。')
+        } else {
+          const n = parseInt(cmd, 10)
+          if (!isNaN(n) && n >= 1 && n <= records.length) {
+            page = n - 1
+            await session.send(formatRecord(page))
+          } else {
+            await session.send('⚠️ 无效输入, 请回复 "下一页"/"上一页"/页码/退出。')
+          }
+        }
+      }
+      return '已退出封禁记录查询。'
+    })
 }
 
 // ========== 工具函数 ==========
