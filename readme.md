@@ -27,6 +27,7 @@ npm install koishi-plugin-ggcevo
 | `mapMonitorGroups` | `string[]` | `[]` | 地图检测广播的群组 ID 列表 |
 | `mapMonitorMapIds` | `number[]` | `[]` | 需要检测的地图 ID 列表 |
 | `mapMonitorApiUrl` | `string` | `https://server.dreamprotocol.info:13085/mapmonitor/maps` | 地图检测 API 地址 |
+| `mapMonitorRecommendMapName` | `string` | `''` | 当所有配置地图均离线时，推荐玩家游玩的地图名称 |
 
 ### 腾讯文档（封禁记录查询）
 
@@ -39,10 +40,10 @@ npm install koishi-plugin-ggcevo
 | `tencentDocsClientSecret` | `string` | `''` | 应用 Client Secret（**应用级模式必填**，用户级模式留空） |
 | `tencentDocsAccessToken` | `string` | `''` | Access Token（**用户级模式必填**，通过扫码授权获取） |
 | `tencentDocsOpenId` | `string` | `''` | Open ID（**用户级模式必填**，与 Access Token 同时获取） |
-| `tencentDocsBanListFileId` | `string` | `DTVdYZVBDdFhEUkp6` | 封禁记录在线表格文件ID（短ID或完整ID） |
-| `tencentDocsBanListSheetId` | `string` | `BB08J2` | 封禁记录工作表ID（表格URL中 `tab` 参数） |
-| `tencentDocsAdminWelfareFileId` | `string` | `DVGRhUUpXUVRJVVJs` | 管理员福利在线表格文件ID（短ID或完整ID，A列QQ号/B列句柄） |
-| `tencentDocsAdminWelfareSheetId` | `string` | `BB08J2` | 管理员福利工作表ID（表格URL中 `tab` 参数） |
+| `tencentDocsBanListFileId` | `string` | `''` | 封禁记录在线表格文件ID（短ID或完整ID） |
+| `tencentDocsBanListSheetId` | `string` | `''` | 封禁记录工作表ID（表格URL中 `tab` 参数） |
+| `tencentDocsAdminWelfareFileId` | `string` | `''` | 管理员福利在线表格文件ID（短ID或完整ID，A列QQ号/B列句柄） |
+| `tencentDocsAdminWelfareSheetId` | `string` | `''` | 管理员福利工作表ID（表格URL中 `tab` 参数） |
 
 **授权模式说明：**
 - **用户级模式**（推荐用于无 `Client Secret` 的场景）：填写 `tencentDocsClientId` + `tencentDocsAccessToken` + `tencentDocsOpenId`，三者均通过腾讯文档开放平台扫码授权流程获取。Token 过期后需重新获取并在控制台更新。
@@ -59,7 +60,7 @@ npm install koishi-plugin-ggcevo
 | `切换 [index]` | — | 切换正在使用的游戏句柄 |
 | `查询 [handle]` | — | 查询某游戏句柄是否已被绑定 |
 | `解绑 [index]` | 解绑句柄 | 解除绑定某个游戏句柄 |
-| `地图检测` | — | 查询已配置地图（`mapMonitorMapIds`）的检测状态：在线状态、最后状态变更时间、24h/30d离线次数、近期事件。需开启 `mapMonitorEnabled` 且配置地图ID |
+| `地图检测` | — | 查询已配置地图（`mapMonitorMapIds`）的检测状态：在线状态、最后状态变更时间、24h/30d离线次数、近期事件。当所有配置地图均离线时，底部额外提示推荐游玩的地图（需配置 `mapMonitorRecommendMapName`）。需开启 `mapMonitorEnabled` 且配置地图ID |
 
 ### 签到与虚拟物品（ggcevo）
 
@@ -129,6 +130,13 @@ npm install koishi-plugin-ggcevo
 - `ggcevo_admin_welfare` — 管理员福利（主键 `id` 自增，对应文档行号 `id+1`，每小时全量同步；A列QQ号/B列句柄）
 
 ## 更新日志
+
+### v1.0.10
+
+地图检测新增推荐地图提示，腾讯文档配置项默认值调整。
+
+- **新增配置项** `mapMonitorRecommendMapName`：当所有配置地图均离线时，在「地图检测」指令返回消息底部额外提示推荐游玩的地图名称
+- **配置项默认值调整**：取消 `tencentDocsBanListFileId`、`tencentDocsBanListSheetId`、`tencentDocsAdminWelfareFileId`、`tencentDocsAdminWelfareSheetId` 的默认填充值，改为空字符串，需手动在控制台填写
 
 ### v1.0.9
 

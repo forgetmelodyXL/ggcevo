@@ -7,6 +7,7 @@ export interface Config {
   mapMonitorGroups: string[]
   mapMonitorMapIds: number[]
   mapMonitorApiUrl: string
+  mapMonitorRecommendMapName: string
   tencentDocsEnabled: boolean
   tencentDocsClientId: string
   tencentDocsClientSecret: string
@@ -23,15 +24,16 @@ export const Config: Schema<Config> = Schema.object({
   mapMonitorGroups: Schema.array(Schema.string()).description('地图检测广播的群组ID列表').default([]),
   mapMonitorMapIds: Schema.array(Schema.number()).description('需要检测的地图ID列表').default([]),
   mapMonitorApiUrl: Schema.string().description('地图检测API地址').default('https://server.dreamprotocol.info:13085/mapmonitor/maps'),
+  mapMonitorRecommendMapName: Schema.string().description('当所有配置地图均离线时, 推荐玩家游玩的地图名称').default(''),
   tencentDocsEnabled: Schema.boolean().description('是否启用腾讯文档功能').default(false),
   tencentDocsClientId: Schema.string().description('腾讯文档开放平台应用 Client ID(应用ID)').default(''),
   tencentDocsClientSecret: Schema.string().description('腾讯文档应用 Client Secret(应用级账号模式需要, 用户级模式留空)').role('secret').default(''),
   tencentDocsAccessToken: Schema.string().description('腾讯文档 Access Token(用户级模式必填, 通过扫码授权获取)').role('secret').default(''),
   tencentDocsOpenId: Schema.string().description('腾讯文档 Open ID(用户级模式必填, 与 Access Token 同时获取)').default(''),
-  tencentDocsBanListFileId: Schema.string().description('封禁记录在线表格的文件ID(短ID或完整ID)').default('DTVdYZVBDdFhEUkp6'),
-  tencentDocsBanListSheetId: Schema.string().description('封禁记录工作表ID(表格URL中tab参数)').default('BB08J2'),
-  tencentDocsAdminWelfareFileId: Schema.string().description('管理员福利在线表格的文件ID(短ID或完整ID, A列QQ号/B列句柄)').default('DVGRhUUpXUVRJVVJs'),
-  tencentDocsAdminWelfareSheetId: Schema.string().description('管理员福利工作表ID(表格URL中tab参数)').default('BB08J2'),
+  tencentDocsBanListFileId: Schema.string().description('封禁记录在线表格的文件ID(短ID或完整ID)').default(''),
+  tencentDocsBanListSheetId: Schema.string().description('封禁记录工作表ID(表格URL中tab参数)').default(''),
+  tencentDocsAdminWelfareFileId: Schema.string().description('管理员福利在线表格的文件ID(短ID或完整ID, A列QQ号/B列句柄)').default(''),
+  tencentDocsAdminWelfareSheetId: Schema.string().description('管理员福利工作表ID(表格URL中tab参数)').default(''),
 })
 
 export const inject = {
@@ -768,6 +770,12 @@ export function apply(ctx: Context, config: Config) {
           }
           return lines.join('\n');
         });
+
+        // 当所有配置地图均离线时, 在消息底部添加推荐提示
+        const allOffline = targetMaps.length > 0 && targetMaps.every((m: any) => !m.isOnline);
+        if (allOffline && config.mapMonitorRecommendMapName) {
+          messages.push(`━━━━━━━━━━━━━━━━\n💡 当前所有地图均处于离线状态，推荐游玩「${config.mapMonitorRecommendMapName}」`);
+        }
 
         return `<quote id="${argv.session.messageId}"/>${messages.join('\n')}`;
       } catch (error) {
