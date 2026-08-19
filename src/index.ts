@@ -783,7 +783,7 @@ export function apply(ctx: Context, config: Config) {
       const session = argv.session;
       const handle = await getHandle(session);
       if (!handle) {
-        return '🔒 需要先绑定游戏句柄。\n💡 使用 `绑定句柄` 命令进行绑定。';
+        return `<quote id="${session.messageId}"/>🔒 需要先绑定游戏句柄。\n💡 使用 \`绑定句柄\` 命令进行绑定。`;
       }
 
       const now = new Date();
@@ -796,7 +796,7 @@ export function apply(ctx: Context, config: Config) {
       });
 
       if (existingLog) {
-        return '📅 今日已签到，明天再来吧！';
+        return `<quote id="${session.messageId}"/>📅 今日已签到，明天再来吧！`;
       }
 
       const goldReward = Math.floor(Math.random() * 11) + 10;
@@ -904,7 +904,7 @@ export function apply(ctx: Context, config: Config) {
       if (monthlyAllowance > 0) {
         message += `\n💰 每月津贴：+${monthlyAllowance} 咕咕币`;
       }
-      return message;
+      return `<quote id="${session.messageId}"/>${message}`;
     });
 
   ctx.command('ggcevo/兑换 <name:string>')
@@ -1487,13 +1487,13 @@ export function apply(ctx: Context, config: Config) {
       const session = argv.session;
       const handle = await getHandle(session);
       if (!handle) {
-        return '🔒 需要先绑定游戏句柄。\n💡 使用 `绑定句柄` 命令进行绑定。';
+        return `<quote id="${session.messageId}"/>🔒 需要先绑定游戏句柄。\n💡 使用 \`绑定句柄\` 命令进行绑定。`;
       }
 
       const backpackItems = await ctx.database.get('ggcevo_backpack', { user_id: handle });
 
       if (backpackItems.length === 0) {
-        return '🎒 背包是空的，快去签到或抽奖获得物品吧！';
+        return `<quote id="${session.messageId}"/>🎒 背包是空的，快去签到或抽奖获得物品吧！`;
       }
 
       let message = `🎒 ${session.username}的背包物品：\n`;
@@ -1503,7 +1503,7 @@ export function apply(ctx: Context, config: Config) {
         message += `${itemName} x${item.count}\n`;
       }
 
-      return message;
+      return `<quote id="${session.messageId}"/>${message}`;
     });
 
   ctx.command('ggcevo/个人信息')
@@ -1511,7 +1511,7 @@ export function apply(ctx: Context, config: Config) {
       const session = argv.session;
       const handle = await getHandle(session);
       if (!handle) {
-        return '🔒 需要先绑定游戏句柄。\n💡 使用 `绑定句柄` 命令进行绑定。';
+        return `<quote id="${session.messageId}"/>🔒 需要先绑定游戏句柄。\n💡 使用 \`绑定句柄\` 命令进行绑定。`;
       }
 
       const username = session.username || '未知用户';
@@ -1587,7 +1587,7 @@ export function apply(ctx: Context, config: Config) {
         }
       }
 
-      return message;
+      return `<quote id="${session.messageId}"/>${message}`;
     });
 
   ctx.command('ggcevo/给予 <targetId> <itemId> <count:number>', { authority: 3 })
@@ -1782,10 +1782,8 @@ export function apply(ctx: Context, config: Config) {
         message += `  ${item.name}（消耗：${cost} 兑换券）\n`;
       }
       message += `─────────────\n`;
-      message += `⚠️ 限定物品不可兑换\n`;
-      message += `⚠️ 兑换功能仅限工作日使用（周一至周五）\n`;
+      message += `⚠️ 兑换功能仅限工作日使用（周一至周五兑换，周六/周日实装进咕咕虫）\n`;
       message += `⚠️ 兑换完成后请找活动管理员登记\n`;
-      message += `⚠️ 兑换实装进咕咕虫将在休息日完成（周六/周日）\n`;
       return message;
     });
 
@@ -1877,16 +1875,16 @@ export function apply(ctx: Context, config: Config) {
       const session = argv.session;
       const handle = await getHandle(session);
       if (!handle) {
-        return '🔒 需要先绑定游戏句柄。\n💡 使用 `绑定句柄` 命令进行绑定。';
+        return `<quote id="${session.messageId}"/>🔒 需要先绑定游戏句柄。\n💡 使用 \`绑定句柄\` 命令进行绑定。`;
       }
 
       if (activityId === undefined || activityId === null) {
-        return `❌ 请输入活动ID！\n使用 活动列表 查询可领取的活动`;
+        return `<quote id="${session.messageId}"/>❌ 请输入活动ID！\n使用 活动列表 查询可领取的活动`;
       }
 
       const [activity] = await ctx.database.get('ggcevo_activity', { id: activityId });
       if (!activity) {
-        return `❌ 不存在ID为 ${activityId} 的活动！`;
+        return `<quote id="${session.messageId}"/>❌ 不存在ID为 ${activityId} 的活动！`;
       }
 
       const now = new Date();
@@ -1894,27 +1892,27 @@ export function apply(ctx: Context, config: Config) {
       const endTime = new Date(activity.end_time);
 
       if (now < startTime) {
-        return `⏰ 活动尚未开始，开始时间：${startTime.toLocaleString('zh-CN')}`;
+        return `<quote id="${session.messageId}"/>⏰ 活动尚未开始，开始时间：${startTime.toLocaleString('zh-CN')}`;
       }
 
       if (now > endTime) {
-        return `⏱️ 活动已结束，结束时间：${endTime.toLocaleString('zh-CN')}`;
+        return `<quote id="${session.messageId}"/>⏱️ 活动已结束，结束时间：${endTime.toLocaleString('zh-CN')}`;
       }
 
       if (activity.required_group && activity.required_group !== '') {
         const currentChannelId = session.channelId || (session.event?.channel?.id as string);
         if (!currentChannelId) {
-          return `❌ 无法获取当前群聊信息！`;
+          return `<quote id="${session.messageId}"/>❌ 无法获取当前群聊信息！`;
         }
         if (currentChannelId !== activity.required_group) {
-          return `❌ 该活动仅限在指定群聊内领取！\n请前往群聊ID: ${activity.required_group} 领取`;
+          return `<quote id="${session.messageId}"/>❌ 该活动仅限在指定群聊内领取！\n请前往群聊ID: ${activity.required_group} 领取`;
         }
       }
 
       if (activity.max_claims > 0) {
         const totalClaims = await ctx.database.get('ggcevo_activity_claim_log', { activity_id: activityId });
         if (totalClaims.length >= activity.max_claims) {
-          return `❌ 该活动领取次数已用尽！`;
+          return `<quote id="${session.messageId}"/>❌ 该活动领取次数已用尽！`;
         }
       }
 
@@ -1924,7 +1922,7 @@ export function apply(ctx: Context, config: Config) {
       });
 
       if (existingClaim) {
-        return `❌ 您已经领取过该活动了！`;
+        return `<quote id="${session.messageId}"/>❌ 您已经领取过该活动了！`;
       }
 
       await ctx.database.create('ggcevo_activity_claim_log', {
@@ -1950,21 +1948,34 @@ export function apply(ctx: Context, config: Config) {
 
       await updateBackpackItem(activity.reward_item, activity.reward_amount);
 
-      return `🎉 领取成功！\n─────────────\n📛 活动：${activity.name}\n🎁 获得：${rewardItemName} x${activity.reward_amount}`;
+      return `<quote id="${session.messageId}"/>🎉 领取成功！\n─────────────\n📛 活动：${activity.name}\n🎁 获得：${rewardItemName} x${activity.reward_amount}`;
     });
 
-  ctx.command('ggcevo/活动列表')
-    .action(async () => {
+  ctx.command('ggcevo/活动列表 [showAll]')
+    .action(async (argv, showAll) => {
       const activities = await ctx.database.get('ggcevo_activity', {});
       if (activities.length === 0) {
         return `📋 暂无活动`;
       }
 
       const now = new Date();
+      // 默认(不带参数)只显示进行中与未开始的活动, 不显示已过期活动
+      // 带任意参数(如 all/全部)则显示全部活动
+      const showExpired = !!showAll;
+      const visibleActivities = activities.filter(activity => {
+        const endTime = new Date(activity.end_time);
+        if (now > endTime && !showExpired) return false;  // 过滤已过期
+        return true;
+      });
+
+      if (visibleActivities.length === 0) {
+        return `📋 暂无进行中或未开始的活动\n💡 输入 "活动列表 全部" 可查看包含已过期在内的全部活动`;
+      }
+
       let message = `📋 活动列表\n`;
       message += `─────────────\n`;
 
-      for (const activity of activities) {
+      for (const activity of visibleActivities) {
         const startTime = new Date(activity.start_time);
         const endTime = new Date(activity.end_time);
         const rewardItemName = ItemConfig[activity.reward_item] || '未知物品';
@@ -2580,19 +2591,41 @@ export function apply(ctx: Context, config: Config) {
     })
 
   // 查询当前绑定句柄的封禁记录 (从数据库读取, 每页1条, 支持翻页)
-  ctx.command('ggcevo/封禁记录')
-    .action(async (argv) => {
+  ctx.command('ggcevo/封禁记录 [user]')
+    .usage('不带参数查询自己的封禁记录, 携带 @用户 可查询对方句柄的封禁记录')
+    .example('封禁记录, 查询自己的封禁记录\n    封禁记录 @用户, 查询对方句柄的封禁记录')
+    .action(async (argv, user) => {
       if (!isDocsConfigured()) return '❌ 腾讯文档功能未启用或配置不完整。'
       const session = argv.session
 
-      const handle = await getHandle(session)
-      if (!handle) {
-        return '🔒 需要先绑定游戏句柄。\n💡 使用 `绑定句柄` 命令进行绑定。'
+      // 解析目标句柄: 无参数时查自己, 带 @ 时查对方当前使用中的句柄
+      let targetHandle: string | null
+      let isOther = false
+      if (!user) {
+        targetHandle = await getHandle(session)
+      } else {
+        const parsedUser = h.parse(user)[0]
+        if (!parsedUser || parsedUser.type !== 'at' || !parsedUser.attrs.id) {
+          return `❌ 参数错误, 请输入"封禁记录 @用户"查询对方的封禁记录。`
+        }
+        const targetUserId = parsedUser.attrs.id
+        const [profile] = await ctx.database.get('sc2arcade_player', { userId: targetUserId, isActive: true })
+        if (!profile) {
+          return `❌ 对方暂未绑定游戏句柄。`
+        }
+        targetHandle = `${profile.regionId}-S2-${profile.realmId}-${profile.profileId}`
+        isOther = true
       }
+
+      if (!targetHandle) {
+        return `🔒 需要先绑定游戏句柄。\n💡 使用 \`绑定句柄\` 命令进行绑定。`
+      }
+
+      const handle = targetHandle
 
       const [lastSync] = await ctx.database.get('ggcevo_ban_record', {}, { limit: 1 })
       if (!lastSync) {
-        return '⚠️ 封禁记录尚未同步, 请稍后再试或联系管理员。'
+        return `⚠️ 封禁记录尚未同步, 请稍后再试或联系管理员。`
       }
       const syncTime = lastSync.update_time
 
@@ -2601,9 +2634,11 @@ export function apply(ctx: Context, config: Config) {
       const target = normalizeHandle(handle)
       const records = allRecords.filter(r => r.handle && normalizeHandle(r.handle) === target)
 
+      const ownerLabel = isOther ? '对方句柄' : '句柄'
+
       if (records.length === 0) {
         return [
-          `✅ 句柄 ${handle} 暂无封禁记录。`,
+          `✅ ${ownerLabel} ${handle} 暂无封禁记录。`,
           `📊 数据最近同步: ${toBeijingTime(syncTime.toISOString())}`,
         ].join('\n')
       }
@@ -2611,7 +2646,7 @@ export function apply(ctx: Context, config: Config) {
       const formatRecord = (idx: number): string => {
         const r = records[idx]
         return [
-          `📋 封禁记录 (${idx + 1}/${records.length})`,
+          `📋 ${ownerLabel}封禁记录 (${idx + 1}/${records.length})`,
           `文档行号: ${r.id + 1} 行`,  // id 对应文档行号 (跳过表头)
           `句柄: ${r.handle}`,
           `封禁等级: ${r.ban_level || '-'}`,
