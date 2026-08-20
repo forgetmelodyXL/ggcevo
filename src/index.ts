@@ -8,6 +8,7 @@ export interface Config {
   mapMonitorMapIds: number[]
   mapMonitorApiUrl: string
   mapMonitorRecommendMapName: string
+  curfewEnabled: boolean
   tencentDocsEnabled: boolean
   tencentDocsClientId: string
   tencentDocsClientSecret: string
@@ -19,22 +20,31 @@ export interface Config {
   tencentDocsAdminWelfareSheetId: string
 }
 
-export const Config: Schema<Config> = Schema.object({
-  mapMonitorEnabled: Schema.boolean().description('是否启用地图检测定时任务').default(false),
-  mapMonitorGroups: Schema.array(Schema.string()).description('地图检测广播的群组ID列表').default([]),
-  mapMonitorMapIds: Schema.array(Schema.number()).description('需要检测的地图ID列表').default([]),
-  mapMonitorApiUrl: Schema.string().description('地图检测API地址').default('https://server.dreamprotocol.info:13085/mapmonitor/maps'),
-  mapMonitorRecommendMapName: Schema.string().description('当所有配置地图均离线时, 推荐玩家游玩的地图名称').default(''),
-  tencentDocsEnabled: Schema.boolean().description('是否启用腾讯文档功能').default(false),
-  tencentDocsClientId: Schema.string().description('腾讯文档开放平台应用 Client ID(应用ID)').default(''),
-  tencentDocsClientSecret: Schema.string().description('腾讯文档应用 Client Secret(应用级账号模式需要, 用户级模式留空)').role('secret').default(''),
-  tencentDocsAccessToken: Schema.string().description('腾讯文档 Access Token(用户级模式必填, 通过扫码授权获取)').role('secret').default(''),
-  tencentDocsOpenId: Schema.string().description('腾讯文档 Open ID(用户级模式必填, 与 Access Token 同时获取)').default(''),
-  tencentDocsBanListFileId: Schema.string().description('封禁记录在线表格的文件ID(短ID或完整ID)').default(''),
-  tencentDocsBanListSheetId: Schema.string().description('封禁记录工作表ID(表格URL中tab参数)').default(''),
-  tencentDocsAdminWelfareFileId: Schema.string().description('管理员福利在线表格的文件ID(短ID或完整ID, A列QQ号/B列句柄)').default(''),
-  tencentDocsAdminWelfareSheetId: Schema.string().description('管理员福利工作表ID(表格URL中tab参数)').default(''),
-})
+export const Config: Schema<Config> = Schema.intersect([
+  Schema.object({
+    mapMonitorEnabled: Schema.boolean().description('是否启用地图检测定时任务').default(false),
+    mapMonitorGroups: Schema.array(Schema.string()).description('地图检测广播的群组ID列表').default([]),
+    mapMonitorMapIds: Schema.array(Schema.number()).description('需要检测的地图ID列表').default([]),
+    mapMonitorApiUrl: Schema.string().description('地图检测API地址').default('https://server.dreamprotocol.info:13085/mapmonitor/maps'),
+    mapMonitorRecommendMapName: Schema.string().description('当所有配置地图均离线时, 推荐玩家游玩的地图名称').default(''),
+  }).description('地图检测'),
+
+  Schema.object({
+    curfewEnabled: Schema.boolean().description('是否启用宵禁(启用后0点-8点禁止签到和抽奖, 17点-24点禁止抽奖)').default(false),
+  }).description('宵禁设置'),
+
+  Schema.object({
+    tencentDocsEnabled: Schema.boolean().description('是否启用腾讯文档功能').default(false),
+    tencentDocsClientId: Schema.string().description('腾讯文档开放平台应用 Client ID(应用ID)').default(''),
+    tencentDocsClientSecret: Schema.string().description('腾讯文档应用 Client Secret(应用级账号模式需要, 用户级模式留空)').role('secret').default(''),
+    tencentDocsAccessToken: Schema.string().description('腾讯文档 Access Token(用户级模式必填, 通过扫码授权获取)').role('secret').default(''),
+    tencentDocsOpenId: Schema.string().description('腾讯文档 Open ID(用户级模式必填, 与 Access Token 同时获取)').default(''),
+    tencentDocsBanListFileId: Schema.string().description('封禁记录在线表格的文件ID(短ID或完整ID)').default(''),
+    tencentDocsBanListSheetId: Schema.string().description('封禁记录工作表ID(表格URL中tab参数)').default(''),
+    tencentDocsAdminWelfareFileId: Schema.string().description('管理员福利在线表格的文件ID(短ID或完整ID, A列QQ号/B列句柄)').default(''),
+    tencentDocsAdminWelfareSheetId: Schema.string().description('管理员福利工作表ID(表格URL中tab参数)').default(''),
+  }).description('腾讯文档'),
+])
 
 export const inject = {
   required: ['database'],
@@ -480,6 +490,33 @@ export function apply(ctx: Context, config: Config) {
     return `${regionId}-S2-${realmId}-${profileId}`;
   };
 
+  // ========== 宵禁检查 ==========
+
+  /**
+   * 宵禁检查
+   * @param type 'signin' 或 'lottery'
+   * @returns 拦截时返回提示消息字符串, 允许时返回 null
+   */
+  const checkCurfew = (type: 'signin' | 'lottery'): string | null => {
+    if (!config.curfewEnabled) return null;
+    const hour = new Date().getHours(); // 0-23
+    if (type === 'signin') {
+      // 0点-8点禁止签到 (0,1,2,3,4,5,6,7 共8小时, 8点已恢复)
+      if (hour < 8) {
+        return `🌙 当前处于宵禁时段（0:00-8:00），禁止签到。\n请在 8:00 后再试。`;
+      }
+    } else {
+      // 抽奖: 0点-8点 和 17点-24点 禁止 (17,18,19,20,21,22,23 共7小时)
+      if (hour < 8) {
+        return `🌙 当前处于宵禁时段（0:00-8:00），禁止抽奖。\n请在 8:00 后再试。`;
+      }
+      if (hour >= 17) {
+        return `🌙 当前处于宵禁时段（17:00-24:00），禁止抽奖。\n请在次日 0:00-8:00 之外的时段或 8:00-17:00 期间再试。`;
+      }
+    }
+    return null;
+  };
+
   // ========== 命令注册 (sc2arcade 部分, 前缀改为 ggcevo_) ==========
 
   // 绑定
@@ -789,6 +826,8 @@ export function apply(ctx: Context, config: Config) {
   ctx.command('ggcevo/签到')
     .action(async (argv) => {
       const session = argv.session;
+      const curfewMsg = checkCurfew('signin');
+      if (curfewMsg) return `<quote id="${session.messageId}"/>${curfewMsg}`;
       const handle = await getHandle(session);
       if (!handle) {
         return `<quote id="${session.messageId}"/>🔒 需要先绑定游戏句柄。\n💡 使用 \`绑定句柄\` 命令进行绑定。`;
@@ -1042,6 +1081,8 @@ export function apply(ctx: Context, config: Config) {
     .option('count', '-c <count:number> 抽奖次数')
     .action(async (argv) => {
       const session = argv.session;
+      const curfewMsg = checkCurfew('lottery');
+      if (curfewMsg) return curfewMsg;
       const { poolId = 2, count } = argv.options;
 
       const handle = await getHandle(session);
