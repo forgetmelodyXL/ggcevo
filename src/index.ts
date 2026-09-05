@@ -18,6 +18,7 @@ export interface Config {
   tencentDocsBanListSheetId: string
   tencentDocsAdminWelfareFileId: string
   tencentDocsAdminWelfareSheetId: string
+  banNotifyGroups: string[]
 }
 
 export const Config: Schema<Config> = Schema.intersect([
@@ -30,7 +31,7 @@ export const Config: Schema<Config> = Schema.intersect([
   }).description('地图检测'),
 
   Schema.object({
-    curfewEnabled: Schema.boolean().description('是否启用宵禁(启用后0点-8点禁止签到和抽奖, 17点-24点禁止抽奖)').default(false),
+    curfewEnabled: Schema.boolean().description('是否启用宵禁(启用后0点-6点禁止签到和抽奖, 17点-24点禁止抽奖)').default(false),
   }).description('宵禁设置'),
 
   Schema.object({
@@ -43,6 +44,7 @@ export const Config: Schema<Config> = Schema.intersect([
     tencentDocsBanListSheetId: Schema.string().description('封禁记录工作表ID(表格URL中tab参数)').default(''),
     tencentDocsAdminWelfareFileId: Schema.string().description('管理员福利在线表格的文件ID(短ID或完整ID, A列QQ号/B列句柄)').default(''),
     tencentDocsAdminWelfareSheetId: Schema.string().description('管理员福利工作表ID(表格URL中tab参数)').default(''),
+    banNotifyGroups: Schema.array(Schema.string()).description('封禁提醒广播的群组ID列表(同步检测到新增封禁记录时在此提醒)').default([]),
   }).description('腾讯文档'),
 ])
 
@@ -501,17 +503,17 @@ export function apply(ctx: Context, config: Config) {
     if (!config.curfewEnabled) return null;
     const hour = new Date().getHours(); // 0-23
     if (type === 'signin') {
-      // 0点-8点禁止签到 (0,1,2,3,4,5,6,7 共8小时, 8点已恢复)
-      if (hour < 8) {
-        return `🌙 当前处于宵禁时段（0:00-8:00），禁止签到。\n请在 8:00 后再试。`;
+      // 0点-6点禁止签到 (0,1,2,3,4,5 共6小时, 6点已恢复)
+      if (hour < 6) {
+        return `🌙 宵禁时段（0:00-6:00），暂不能签到。`;
       }
     } else {
-      // 抽奖: 0点-8点 和 17点-24点 禁止 (17,18,19,20,21,22,23 共7小时)
-      if (hour < 8) {
-        return `🌙 当前处于宵禁时段（0:00-8:00），禁止抽奖。\n请在 8:00 后再试。`;
+      // 抽奖: 0点-6点 和 17点-24点 禁止
+      if (hour < 6) {
+        return `🌙 宵禁时段（0:00-6:00），暂不能抽奖。`;
       }
       if (hour >= 17) {
-        return `🌙 当前处于宵禁时段（17:00-24:00），禁止抽奖。\n请在次日 0:00-8:00 之外的时段或 8:00-17:00 期间再试。`;
+        return `🌙 宵禁时段（17:00-24:00），暂不能抽奖。`;
       }
     }
     return null;
@@ -2433,6 +2435,61 @@ export function apply(ctx: Context, config: Config) {
     return s.toLowerCase()
   }
 
+  /** 提取日期部分(仅年月日), 兼容 YYYY-MM-DD HH:mm:ss / YYYY/M/D 等格式 */
+  const dateOnly = (s: string): string => {
+    const m = (s || '').match(/(\d{4})[-\/年.](\d{1,2})[-\/月.](\d{1,2})/)
+    if (m) return `${m[1]}-${m[2].padStart(2, '0')}-${m[3].padStart(2, '0')}`
+    return (s || '').trim()
+  }
+
+  /** 计算封禁记录内容指纹, 用于识别新增记录 */
+  const banRecordKey = (r: { handle: string; ban_level: string; reason: string; count: string; auditor: string; audit_time: string }): string =>
+    [r.handle, r.ban_level, r.reason, r.count, r.auditor, r.audit_time].map(v => (v || '').trim()).join('|')
+
+  /** 向配置的群组广播新增封禁提醒: 句柄绑定了QQ则@该用户, 否则只提醒句柄 */
+  const notifyNewBanRecords = async (records: Array<{ handle: string; ban_level: string; reason: string; count: string; auditor: string; audit_time: string }>) => {
+    const groups = config.banNotifyGroups || []
+    if (groups.length === 0 || records.length === 0) return
+
+    // 构建 句柄 → QQ 绑定映射 (优先取当前使用中的句柄)
+    const players = await ctx.database.get('sc2arcade_player', {})
+    const handleUserMap = new Map<string, string>()
+    for (const p of players) {
+      const key = normalizeHandle(`${p.regionId}-S2-${p.realmId}-${p.profileId}`)
+      if (p.isActive || !handleUserMap.has(key)) handleUserMap.set(key, p.userId)
+    }
+
+    for (const r of records) {
+      const userId = handleUserMap.get(normalizeHandle(r.handle))
+      const lines = [
+        '🚫 封禁提醒',
+        userId
+          ? `${h('at', { id: userId })} 你的句柄 ${r.handle} 有新的封禁记录`
+          : `句柄 ${r.handle} 有新的封禁记录`,
+        `封禁等级: ${r.ban_level || '-'}`,
+        `审核员: ${r.auditor || '-'}`,
+        `审核时间: ${dateOnly(r.audit_time) || '-'}`,
+        '处罚原因详情见封禁文档',
+      ]
+      const message = lines.join('\n')
+      for (const groupId of groups) {
+        let sent = false
+        for (const bot of ctx.bots) {
+          try {
+            await bot.sendMessage(groupId, message)
+            sent = true
+            break
+          } catch {
+            // 此 bot 可能不在该群, 尝试下一个
+          }
+        }
+        if (!sent) {
+          ctx.logger('ggcevo').warn('发送封禁提醒到群组 %s 失败: 所有 bot 均无法发送', groupId)
+        }
+      }
+    }
+  }
+
   /** 从腾讯文档拉取封禁记录表 A:G 列全部数据 (自动按 1000 行分批, 跳过表头) */
   const fetchBanRecordsFromDocs = async (): Promise<string[][]> => {
     const fileId = config.tencentDocsBanListFileId
@@ -2480,6 +2537,7 @@ export function apply(ctx: Context, config: Config) {
    * 同步封禁记录到数据库: 全量拉取文档数据 → 清空旧数据 → 写入新数据
    * 自增 id 从 1 开始, 对应文档第 2 行(首条数据), id=N 对应文档第 N+1 行
    * 每次同步为全量替换: 文档新增/修改/删除的行均会被同步到数据库
+   * 同步时按内容指纹对比新旧记录, 检测到新增封禁记录时向配置群组发送提醒
    * @returns 同步的记录条数
    */
   const syncBanRecords = async (): Promise<number> => {
@@ -2496,14 +2554,27 @@ export function apply(ctx: Context, config: Config) {
       update_time: now,
     }))
 
-    // 统计旧记录数, 用于日志输出同步变化
-    const oldRecords = await ctx.database.get('ggcevo_ban_record', {}, { fields: ['id'] })
+    // 读取旧记录, 用于统计同步变化与识别新增封禁记录
+    const oldRecords = await ctx.database.get('ggcevo_ban_record', {})
     const oldCount = oldRecords.length
+    // 数据库为空(首次同步)时仅建立基线不提醒; 已有数据时按内容指纹识别新增记录
+    const oldKeys = new Set(oldRecords.map(banRecordKey))
+    const newRecords = oldCount === 0 ? [] : records.filter(r => !oldKeys.has(banRecordKey(r)))
 
     // 全量替换: 清空旧数据后写入新数据, 保证 id 与文档行号严格对应
     await ctx.database.remove('ggcevo_ban_record', {})
     if (records.length > 0) {
       await ctx.database.upsert('ggcevo_ban_record', records)
+    }
+
+    // 广播新增封禁提醒 (提醒失败不影响同步流程)
+    if (newRecords.length > 0) {
+      try {
+        await notifyNewBanRecords(newRecords)
+        ctx.logger('ggcevo').info('检测到 %d 条新增封禁记录, 已发送提醒', newRecords.length)
+      } catch (e) {
+        ctx.logger('ggcevo').warn('发送封禁提醒失败: %o', e)
+      }
     }
 
     const diff = records.length - oldCount
@@ -2702,7 +2773,7 @@ export function apply(ctx: Context, config: Config) {
           `处罚原因: ${r.reason || '-'}`,
           `处罚次数: ${r.count || '-'}`,
           `审核员: ${r.auditor || '-'}`,
-          `审核时间: ${r.audit_time || '-'}`,
+          `审核时间: ${dateOnly(r.audit_time) || '-'}`,
           '',
           '💡 回复 "下一页"/"上一页"/页码数字 翻页, 或 "退出" 结束',
         ].join('\n')
