@@ -2803,7 +2803,7 @@ export function apply(ctx: Context, config: Config) {
           `审核员: ${r.auditor || '-'}`,
           `审核时间: ${dateOnly(r.audit_time) || '-'}`,
           '',
-          '💡 回复 "下一页"/"上一页"/页码数字 翻页, 或 "退出" 结束',
+          '💡 回复 "下一页"/"上一页"/页码数字 翻页, 回复其他任意内容退出',
         ].join('\n')
       }
 
@@ -2816,20 +2816,19 @@ export function apply(ctx: Context, config: Config) {
         const input = await session.prompt(60000)
         if (!input) break
         const cmd = input.trim()
-        if (/^(退出|exit|q|end)$/i.test(cmd)) break
         if (/^(下一页|下页|next|n)$/i.test(cmd)) {
           if (page < records.length - 1) { page++; await session.send(formatRecord(page)) }
-          else await session.send('已是最后一页。回复 "上一页" 或 "退出"。')
+          else await session.send('已是最后一页。回复 "上一页" 或其他任意内容退出。')
         } else if (/^(上一页|上页|prev|p|上一个)$/i.test(cmd)) {
           if (page > 0) { page--; await session.send(formatRecord(page)) }
-          else await session.send('已是第一页。回复 "下一页" 或 "退出"。')
+          else await session.send('已是第一页。回复 "下一页" 或其他任意内容退出。')
         } else {
           const n = parseInt(cmd, 10)
           if (!isNaN(n) && n >= 1 && n <= records.length) {
             page = n - 1
             await session.send(formatRecord(page))
           } else {
-            await session.send('⚠️ 无效输入, 请回复 "下一页"/"上一页"/页码/退出。')
+            break  // 输入其他内容(含"退出")直接退出查询
           }
         }
       }
