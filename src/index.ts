@@ -2442,9 +2442,12 @@ export function apply(ctx: Context, config: Config) {
     return (s || '').trim()
   }
 
-  /** 计算封禁记录内容指纹, 用于识别新增记录 */
-  const banRecordKey = (r: { handle: string; ban_level: string; reason: string; count: string; auditor: string; audit_time: string }): string =>
-    [r.handle, r.ban_level, r.reason, r.count, r.auditor, r.audit_time].map(v => (v || '').trim()).join('|')
+  /**
+   * 计算封禁记录身份指纹(标准化句柄 + 审核日期), 用于识别新增记录
+   * 不含封禁等级/处罚原因等复审可修改的字段, 避免旧记录被复审修改后误判为新增
+   */
+  const banRecordIdentity = (r: { handle: string; audit_time: string }): string =>
+    `${normalizeHandle(r.handle)}|${dateOnly(r.audit_time)}`
 
   /** 向配置的群组广播新增封禁提醒: 句柄绑定了QQ则@该用户, 否则只提醒句柄 */
   const notifyNewBanRecords = async (records: Array<{ handle: string; ban_level: string; reason: string; count: string; auditor: string; audit_time: string }>) => {
@@ -2557,9 +2560,34 @@ export function apply(ctx: Context, config: Config) {
     // 读取旧记录, 用于统计同步变化与识别新增封禁记录
     const oldRecords = await ctx.database.get('ggcevo_ban_record', {})
     const oldCount = oldRecords.length
-    // 数据库为空(首次同步)时仅建立基线不提醒; 已有数据时按内容指纹识别新增记录
-    const oldKeys = new Set(oldRecords.map(banRecordKey))
-    const newRecords = oldCount === 0 ? [] : records.filter(r => !oldKeys.has(banRecordKey(r)))
+
+    // 按标准化句柄分组, 组内对比记录数量识别新增:
+    // - 复审修改旧记录(封禁等级/处罚原因等)不改变数量, 不会触发提醒
+    // - 数量增加时按身份指纹(句柄+审核日期)挑选新增记录, 复审连带修改审核日期的边缘情况下仅取多出的数量
+    const groupByHandle = (recs: Array<{ handle: string }>): Map<string, any[]> => {
+      const map = new Map<string, any[]>()
+      for (const r of recs) {
+        const key = normalizeHandle(r.handle)
+        if (!key) continue  // 跳过空句柄行
+        if (!map.has(key)) map.set(key, [])
+        map.get(key).push(r)
+      }
+      return map
+    }
+    const newBanRecords: typeof records = []
+    if (oldCount > 0) {  // 数据库为空(首次同步)时仅建立基线, 不提醒
+      const oldGroups = groupByHandle(oldRecords)
+      const newGroups = groupByHandle(records)
+      for (const [key, newGroup] of newGroups) {
+        const oldGroup = oldGroups.get(key) || []
+        const diff = newGroup.length - oldGroup.length
+        if (diff <= 0) continue  // 数量未增加: 属于旧记录修改或删除, 不提醒
+        const oldIdentities = new Set(oldGroup.map(banRecordIdentity))
+        let candidates = newGroup.filter(r => !oldIdentities.has(banRecordIdentity(r)))
+        if (candidates.length > diff) candidates = candidates.slice(candidates.length - diff)
+        newBanRecords.push(...candidates)
+      }
+    }
 
     // 全量替换: 清空旧数据后写入新数据, 保证 id 与文档行号严格对应
     await ctx.database.remove('ggcevo_ban_record', {})
@@ -2568,10 +2596,10 @@ export function apply(ctx: Context, config: Config) {
     }
 
     // 广播新增封禁提醒 (提醒失败不影响同步流程)
-    if (newRecords.length > 0) {
+    if (newBanRecords.length > 0) {
       try {
-        await notifyNewBanRecords(newRecords)
-        ctx.logger('ggcevo').info('检测到 %d 条新增封禁记录, 已发送提醒', newRecords.length)
+        await notifyNewBanRecords(newBanRecords)
+        ctx.logger('ggcevo').info('检测到 %d 条新增封禁记录, 已发送提醒', newBanRecords.length)
       } catch (e) {
         ctx.logger('ggcevo').warn('发送封禁提醒失败: %o', e)
       }
