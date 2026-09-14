@@ -2487,26 +2487,15 @@ export function apply(ctx: Context, config: Config) {
   const banRecordIdentity = (r: { handle: string; audit_time: string }): string =>
     `${normalizeHandle(r.handle)}|${dateOnly(r.audit_time)}`
 
-  /** 向配置的群组广播新增封禁提醒: 句柄绑定了QQ则@该用户, 否则只提醒句柄 */
+  /** 向配置的群组广播新增封禁提醒 (不再@用户, 仅提醒句柄信息) */
   const notifyNewBanRecords = async (records: Array<{ handle: string; ban_level: string; reason: string; count: string; auditor: string; audit_time: string }>) => {
     const groups = config.banNotifyGroups || []
     if (groups.length === 0 || records.length === 0) return
 
-    // 构建 句柄 → QQ 绑定映射 (优先取当前使用中的句柄)
-    const players = await ctx.database.get('sc2arcade_player', {})
-    const handleUserMap = new Map<string, string>()
-    for (const p of players) {
-      const key = normalizeHandle(`${p.regionId}-S2-${p.realmId}-${p.profileId}`)
-      if (p.isActive || !handleUserMap.has(key)) handleUserMap.set(key, p.userId)
-    }
-
     for (const r of records) {
-      const userId = handleUserMap.get(normalizeHandle(r.handle))
       const lines = [
         '🚫 封禁提醒',
-        userId
-          ? `${h('at', { id: userId })} 你的句柄 ${r.handle} 有新的封禁记录`
-          : `句柄 ${r.handle} 有新的封禁记录`,
+        `句柄 ${r.handle} 有新的封禁记录`,
         `封禁等级: ${r.ban_level || '-'}`,
         `审核员: ${r.auditor || '-'}`,
         `审核时间: ${dateOnly(r.audit_time) || '-'}`,
@@ -2841,30 +2830,48 @@ export function apply(ctx: Context, config: Config) {
           `审核员: ${r.auditor || '-'}`,
           `审核时间: ${dateOnly(r.audit_time) || '-'}`,
           '',
-          '💡 回复 "下一页"/"上一页"/页码数字 翻页, 回复其他任意内容退出',
+          '💡 每次最多展示3条, 回复 "下一页"/"上一页"/页码数字 翻页, 回复其他任意内容退出',
         ].join('\n')
       }
 
+      // 每次指令最多展示3条记录, 第3条输出后自动退出查询
+      const MAX_VIEW = 3
       let page = 0
-      await session.send([
-        formatRecord(page),
-        `📊 数据最近同步: ${toBeijingTime(syncTime.toISOString())}`,
-      ].join('\n'))
+      let viewCount = 0
+      const sendPage = async (idx: number, withSync: boolean): Promise<void> => {
+        const lines = [formatRecord(idx)]
+        if (withSync) lines.push(`📊 数据最近同步: ${toBeijingTime(syncTime.toISOString())}`)
+        await session.send(lines.join('\n'))
+        viewCount++
+      }
+
+      await sendPage(page, true)
+      if (viewCount >= MAX_VIEW) return '已退出封禁记录查询。'
+
       while (true) {
         const input = await session.prompt(60000)
         if (!input) break
         const cmd = input.trim()
         if (/^(下一页|下页|next|n)$/i.test(cmd)) {
-          if (page < records.length - 1) { page++; await session.send(formatRecord(page)) }
+          if (page < records.length - 1) {
+            page++
+            await sendPage(page, false)
+            if (viewCount >= MAX_VIEW) break  // 第3条输出后自动退出
+          }
           else await session.send('已是最后一页。回复 "上一页" 或其他任意内容退出。')
         } else if (/^(上一页|上页|prev|p|上一个)$/i.test(cmd)) {
-          if (page > 0) { page--; await session.send(formatRecord(page)) }
+          if (page > 0) {
+            page--
+            await sendPage(page, false)
+            if (viewCount >= MAX_VIEW) break
+          }
           else await session.send('已是第一页。回复 "下一页" 或其他任意内容退出。')
         } else {
           const n = parseInt(cmd, 10)
           if (!isNaN(n) && n >= 1 && n <= records.length) {
             page = n - 1
-            await session.send(formatRecord(page))
+            await sendPage(page, false)
+            if (viewCount >= MAX_VIEW) break
           } else {
             break  // 输入其他内容(含"退出")直接退出查询
           }
