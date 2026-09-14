@@ -75,7 +75,8 @@ npm install koishi-plugin-ggcevo
 | `切换 [index]` | — | 切换正在使用的游戏句柄 |
 | `查询 [handle]` | — | 查询某游戏句柄是否已被绑定 |
 | `解绑 [index]` | 解绑句柄 | 解除绑定某个游戏句柄 |
-| `地图检测` | — | 查询已配置地图（`mapMonitorMapIds`）的检测状态：在线状态、最后状态变更时间、24h/30d离线次数、近期事件。当所有配置地图均离线时，底部额外提示推荐游玩的地图（需配置 `mapMonitorRecommendMapName`）。需开启 `mapMonitorEnabled` 且配置地图ID |
+| `迁移 <qq>` | — | 将指定QQ号绑定的全部游戏句柄迁移到当前账号（用于从 onebot 机器人切换至 QQ 官方机器人后，将旧 QQ 号下绑定的句柄转移到新的 openid 身份下） |
+| `地图检测` | — | 查询已配置地图（`mapMonitorMapIds`）的检测状态：在线状态、最后状态变更时间、24h/30d离线次数、近期事件。当所有配置地图均离线时，底部额外提示推荐游玩的地图名称（需配置 `mapMonitorRecommendMapName`）。需开启 `mapMonitorEnabled` 且配置地图ID |
 
 ### 签到与虚拟物品（ggcevo）
 
@@ -145,6 +146,13 @@ npm install koishi-plugin-ggcevo
 - `ggcevo_admin_welfare` — 管理员福利（主键 `id` 自增，对应文档行号 `id+1`，每小时全量同步；A列QQ号/B列句柄）
 
 ## 更新日志
+
+### v1.1.1
+
+新增句柄绑定迁移指令，适配 QQ 官方机器人。
+
+- **新增指令 `迁移 <qq>`**：从 onebot 机器人更换为 QQ 官方机器人后，用户 `userId` 由 QQ 号变更为 openid，使用本指令可将指定 QQ 号下绑定的全部游戏句柄迁移至当前账号（openid）名下
+- **迁移逻辑**：仅更新 `sc2arcade_player` 表中对应记录的 `userId`；若当前账号名下已有句柄，迁移过来的句柄一律不设为当前使用，避免出现多个当前使用句柄
 
 ### v1.1.0
 

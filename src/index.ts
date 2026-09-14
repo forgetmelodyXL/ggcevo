@@ -754,6 +754,44 @@ export function apply(ctx: Context, config: Config) {
       }
     });
 
+  // 迁移绑定句柄 (onebot QQ号 -> QQ官方机器人 openid)
+  ctx.command('sc2arcade/迁移 <qq>', '将指定QQ号绑定的游戏句柄迁移到当前账号')
+    .usage('用于从onebot机器人迁移至QQ官方机器人: /迁移 123456789')
+    .action(async (argv, qq) => {
+      const session = argv.session;
+      try {
+        const qqNumber = String(qq).trim();
+        if (!/^\d{5,15}$/.test(qqNumber)) {
+          return `<quote id="${session.messageId}"/>❌ 参数错误, 请输入正确的QQ号, 例如: /迁移 123456789`;
+        }
+
+        const records = await ctx.database.get('sc2arcade_player', { userId: qqNumber });
+        if (records.length === 0) {
+          return `<quote id="${session.messageId}"/>❌ 未找到QQ号 ${qqNumber} 绑定的游戏句柄, 无法迁移。`;
+        }
+
+        const currentUserId = session.userId;
+        const currentUserHandles = await ctx.database.get('sc2arcade_player', { userId: currentUserId });
+        const keepOriginalActive = currentUserHandles.length === 0;
+
+        await Promise.all(records.map(record =>
+          ctx.database.set('sc2arcade_player', { id: record.id }, {
+            userId: currentUserId,
+            isActive: keepOriginalActive ? record.isActive : false
+          })
+        ));
+
+        const message = records.map((h, i) =>
+          `${i + 1}. ${formatHandle(h, keepOriginalActive ? h.isActive : false)}`
+        ).join('\n');
+
+        return `<quote id="${session.messageId}"/>✅ 已将QQ号 ${qqNumber} 绑定的 ${records.length} 个游戏句柄迁移至当前账号:\n${message}`;
+      } catch (error) {
+        console.error('迁移句柄时发生错误:', error);
+        return '⚠️ 服务器繁忙, 请稍后尝试。';
+      }
+    });
+
   // 地图检测查询
   ctx.command('sc2arcade/地图检测', '查询已配置的地图详细信息')
     .action(async (argv) => {
