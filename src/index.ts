@@ -33,7 +33,7 @@ export const Config: Schema<Config> = Schema.intersect([
   }).description('地图检测'),
 
   Schema.object({
-    curfewEnabled: Schema.boolean().description('是否启用宵禁(启用后每晚17点-24点禁止签到、抽奖和挖矿)').default(false),
+    curfewEnabled: Schema.boolean().description('是否启用宵禁(启用后每晚17点-24点禁止抽奖和挖矿, 签到不受限制)').default(false),
   }).description('宵禁设置'),
 
   Schema.object({
@@ -532,17 +532,15 @@ export function apply(ctx: Context, config: Config) {
 
   /**
    * 宵禁检查
-   * @param type 'signin' | 'lottery' | 'mining'
+   * @param type 'lottery' | 'mining' (签到不受宵禁限制)
    * @returns 拦截时返回提示消息字符串, 允许时返回 null
    */
-  const checkCurfew = (type: 'signin' | 'lottery' | 'mining'): string | null => {
+  const checkCurfew = (type: 'lottery' | 'mining'): string | null => {
     if (!config.curfewEnabled) return null;
     const hour = new Date().getHours(); // 0-23
-    // 宵禁统一为每晚 17:00-24:00, 覆盖签到/抽奖/挖矿等咕咕之战玩法指令
+    // 宵禁为每晚 17:00-24:00, 仅限制抽奖和挖矿等咕咕之战玩法指令
     if (hour >= 17) {
-      if (type === 'signin') {
-        return `🌙 宵禁时段（17:00-24:00），暂不能签到。`;
-      } else if (type === 'lottery') {
+      if (type === 'lottery') {
         return `🌙 宵禁时段（17:00-24:00），暂不能抽奖。`;
       } else {
         return `🌙 宵禁时段（17:00-24:00），暂不能挖矿。`;
@@ -949,8 +947,6 @@ export function apply(ctx: Context, config: Config) {
   ctx.command('ggcevo/签到')
     .action(async (argv) => {
       const session = argv.session;
-      const curfewMsg = checkCurfew('signin');
-      if (curfewMsg) return `<quote id="${session.messageId}"/>${curfewMsg}`;
       const handle = await getHandle(session);
       if (!handle) {
         return `<quote id="${session.messageId}"/>🔒 需要先绑定游戏句柄。\n💡 使用 \`绑定句柄\` 命令进行绑定。`;
