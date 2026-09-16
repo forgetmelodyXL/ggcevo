@@ -19,6 +19,8 @@ export interface Config {
   tencentDocsAdminWelfareFileId: string
   tencentDocsAdminWelfareSheetId: string
   banNotifyGroups: string[]
+  handleInactiveUnbindEnabled: boolean
+  handleInactiveUnbindDays: number
 }
 
 export const Config: Schema<Config> = Schema.intersect([
@@ -31,7 +33,7 @@ export const Config: Schema<Config> = Schema.intersect([
   }).description('地图检测'),
 
   Schema.object({
-    curfewEnabled: Schema.boolean().description('是否启用宵禁(启用后0点-6点禁止签到和抽奖, 17点-24点禁止抽奖)').default(false),
+    curfewEnabled: Schema.boolean().description('是否启用宵禁(启用后0点-6点禁止签到和抽奖, 17点-24点禁止抽奖和挖矿)').default(false),
   }).description('宵禁设置'),
 
   Schema.object({
@@ -46,6 +48,11 @@ export const Config: Schema<Config> = Schema.intersect([
     tencentDocsAdminWelfareSheetId: Schema.string().description('管理员福利工作表ID(表格URL中tab参数)').default(''),
     banNotifyGroups: Schema.array(Schema.string()).description('封禁提醒广播的群组ID列表(同步检测到新增封禁记录时在此提醒)').default([]),
   }).description('腾讯文档'),
+
+  Schema.object({
+    handleInactiveUnbindEnabled: Schema.boolean().description('是否启用句柄长时间未使用自动解绑').default(false),
+    handleInactiveUnbindDays: Schema.number().description('句柄超过该天数未使用将自动解绑(仅对非当前使用的句柄生效)').default(90).min(1),
+  }).description('句柄自动解绑'),
 ])
 
 export const inject = {
@@ -118,6 +125,7 @@ declare module 'koishi' {
     ggcevo_docs_token: GgcEvoDocsToken
     ggcevo_ban_record: GgcEvoBanRecord
     ggcevo_admin_welfare: GgcEvoAdminWelfare
+    ggcevo_mining: GgcEvoMiningState
   }
 }
 
@@ -129,6 +137,8 @@ export interface GgcEvoPlayer {
   profileId: number
   createdAt: Date
   isActive: boolean
+  /** 最后使用时间(绑定时记录, 切换时更新切换前后两个句柄), 功能上线前的旧记录可能为 null */
+  lastUsedAt: Date
 }
 
 export interface GgcEvoMapMonitorState {
@@ -175,6 +185,19 @@ export interface GgcEvoAdminWelfare {
   /** B列: 游戏句柄 */
   handle: string
   /** 最近一次同步时间 */
+  update_time: Date
+}
+
+export interface GgcEvoMiningState {
+  /** 挖矿身份标识, 复用游戏句柄字符串 */
+  user_id: string
+  /** 本轮挖矿开始时间(领取后重置为领取时刻, 立即进入下一轮) */
+  start_time: Date
+  /** 累计挖矿总时长(分钟) */
+  total_minutes: number
+  /** 累计挖矿收益金币总数 */
+  total_coins: number
+  /** 最近一次更新/领取时间 */
   update_time: Date
 }
 
@@ -265,6 +288,7 @@ export function apply(ctx: Context, config: Config) {
     profileId: 'unsigned',
     createdAt: 'timestamp',
     isActive: 'boolean',
+    lastUsedAt: { type: 'timestamp', nullable: true },
   }, {
     autoInc: true,
     primary: 'id'
@@ -408,6 +432,18 @@ export function apply(ctx: Context, config: Config) {
     autoInc: true,
   })
 
+  // ========== 数据库模型扩展 (挖矿) ==========
+
+  ctx.model.extend('ggcevo_mining', {
+    user_id: 'string',
+    start_time: 'timestamp',
+    total_minutes: 'unsigned',
+    total_coins: 'unsigned',
+    update_time: 'timestamp',
+  }, {
+    primary: 'user_id',
+  })
+
   // ========== 地图检测定时任务 ==========
 
   if (config.mapMonitorEnabled && config.mapMonitorGroups.length > 0 && config.mapMonitorMapIds.length > 0) {
@@ -496,10 +532,10 @@ export function apply(ctx: Context, config: Config) {
 
   /**
    * 宵禁检查
-   * @param type 'signin' 或 'lottery'
+   * @param type 'signin' | 'lottery' | 'mining'
    * @returns 拦截时返回提示消息字符串, 允许时返回 null
    */
-  const checkCurfew = (type: 'signin' | 'lottery'): string | null => {
+  const checkCurfew = (type: 'signin' | 'lottery' | 'mining'): string | null => {
     if (!config.curfewEnabled) return null;
     const hour = new Date().getHours(); // 0-23
     if (type === 'signin') {
@@ -507,13 +543,18 @@ export function apply(ctx: Context, config: Config) {
       if (hour < 6) {
         return `🌙 宵禁时段（0:00-6:00），暂不能签到。`;
       }
-    } else {
+    } else if (type === 'lottery') {
       // 抽奖: 0点-6点 和 17点-24点 禁止
       if (hour < 6) {
         return `🌙 宵禁时段（0:00-6:00），暂不能抽奖。`;
       }
       if (hour >= 17) {
         return `🌙 宵禁时段（17:00-24:00），暂不能抽奖。`;
+      }
+    } else {
+      // 挖矿(咕咕之战玩法): 17点-24点禁止领取
+      if (hour >= 17) {
+        return `🌙 宵禁时段（17:00-24:00），暂不能挖矿。`;
       }
     }
     return null;
@@ -570,7 +611,8 @@ export function apply(ctx: Context, config: Config) {
         realmId,
         profileId,
         isActive: isFirstHandle,
-        createdAt: new Date()
+        createdAt: new Date(),
+        lastUsedAt: new Date()
       });
 
       return `<quote id="${session.messageId}"/>✅ 您已成功绑定游戏句柄${isFirstHandle ? '并设为当前使用' : ''}。`;
@@ -652,9 +694,17 @@ export function apply(ctx: Context, config: Config) {
         }
 
         const selectedHandle = handles[index - 1];
+        const prevActiveHandle = handles.find(h => h.isActive && h.id !== selectedHandle.id);
 
         await Promise.all(handles.map(handle =>
           ctx.database.set('sc2arcade_player', { id: handle.id }, { isActive: handle.id === selectedHandle.id })
+        ));
+
+        // 切换前后的两个句柄均视为已使用, 更新最后使用时间至当前时间
+        const now = new Date();
+        const touchedIds = prevActiveHandle ? [selectedHandle.id, prevActiveHandle.id] : [selectedHandle.id];
+        await Promise.all(touchedIds.map(id =>
+          ctx.database.set('sc2arcade_player', { id }, { lastUsedAt: now })
         ));
 
         return `<quote id="${session.messageId}"/>✅ 已切换到句柄：${formatHandle(selectedHandle)}`;
@@ -791,6 +841,48 @@ export function apply(ctx: Context, config: Config) {
         return '⚠️ 服务器繁忙, 请稍后尝试。';
       }
     });
+
+  // ========== 句柄长时间未使用自动解绑定时任务 ==========
+
+  if (config.handleInactiveUnbindEnabled) {
+    const checkInactiveHandles = async () => {
+      try {
+        const handles = await ctx.database.get('sc2arcade_player', {});
+        const now = new Date();
+
+        // 功能上线前绑定的句柄没有时间记录, 首次检查时将当前时间作为绑定时间
+        const legacyIds = handles.filter(h => !h.lastUsedAt).map(h => h.id);
+        if (legacyIds.length > 0) {
+          await ctx.database.set('sc2arcade_player', { id: { $in: legacyIds } }, { lastUsedAt: now });
+        }
+
+        // 统计每个用户绑定的句柄数, 仅针对拥有多个句柄的用户的非正在使用句柄
+        const handleCountByUser = new Map<string, number>();
+        for (const h of handles) {
+          handleCountByUser.set(h.userId, (handleCountByUser.get(h.userId) || 0) + 1);
+        }
+
+        const thresholdMs = config.handleInactiveUnbindDays * 24 * 60 * 60 * 1000;
+        const expiredIds = handles
+          .filter(h => h.lastUsedAt
+            && !h.isActive
+            && (handleCountByUser.get(h.userId) || 0) > 1
+            && now.getTime() - new Date(h.lastUsedAt).getTime() > thresholdMs)
+          .map(h => h.id);
+
+        if (expiredIds.length > 0) {
+          await ctx.database.remove('sc2arcade_player', { id: { $in: expiredIds } });
+          ctx.logger('ggcevo').info('已自动解绑 %d 个长时间未使用的句柄', expiredIds.length);
+        }
+      } catch (e) {
+        ctx.logger('ggcevo').warn('句柄长时间未使用自动解绑任务执行失败: %o', e);
+      }
+    };
+
+    // 启动后延迟 5 秒首次检查(为旧数据补记绑定时间), 之后每天检查一次
+    ctx.setTimeout(checkInactiveHandles, 5000);
+    ctx.setInterval(checkInactiveHandles, 24 * 60 * 60 * 1000);
+  }
 
   // 地图检测查询
   ctx.command('sc2arcade/地图检测', '查询已配置的地图详细信息')
@@ -992,6 +1084,74 @@ export function apply(ctx: Context, config: Config) {
         message += `\n💰 每月津贴：+${monthlyAllowance} 咕咕币`;
       }
       return `<quote id="${session.messageId}"/>${message}`;
+    });
+
+  // ========== 挖矿 (挂机收益) ==========
+  // 每半小时产生 4 金币, 单次存储领取上限 24 小时, 领取后立即进入下一轮挖矿
+
+  const MINING_HALF_HOUR_MIN = 30                // 每半小时
+  const MINING_COINS_PER_HALF_HOUR = 4         // 每半小时收益 4 金币
+  const MINING_MAX_MINUTES = 24 * 60           // 单次存储领取上限 24 小时
+
+  ctx.command('ggcevo/挖矿', '领取挂机挖矿收益(每半小时4金币, 上限24小时)')
+    .action(async (argv) => {
+      const session = argv.session;
+      const curfewMsg = checkCurfew('mining');
+      if (curfewMsg) return `<quote id="${session.messageId}"/>${curfewMsg}`;
+      const handle = await getHandle(session);
+      if (!handle) {
+        return `<quote id="${session.messageId}"/>🔒 需要先绑定游戏句柄。\n💡 使用 \`绑定句柄\` 命令进行绑定。`;
+      }
+
+      const now = new Date();
+      const [mining] = await ctx.database.get('ggcevo_mining', { user_id: handle });
+
+      // 首次挖矿: 初始化记录并开始本轮
+      if (!mining) {
+        await ctx.database.create('ggcevo_mining', {
+          user_id: handle,
+          start_time: now,
+          total_minutes: 0,
+          total_coins: 0,
+          update_time: now,
+        });
+        return `<quote id="${session.messageId}"/>⛏️ 开始挂机挖矿！每半小时收益 4 金币，单次存储上限 24 小时，使用 挖矿 命令领取。`;
+      }
+
+      // 计算本轮已挖矿时长并封顶到 24 小时
+      const elapsedMinutes = Math.floor((now.getTime() - new Date(mining.start_time).getTime()) / 60000);
+      const cappedMinutes = Math.max(0, Math.min(elapsedMinutes, MINING_MAX_MINUTES));
+      const earned = Math.floor(cappedMinutes / MINING_HALF_HOUR_MIN) * MINING_COINS_PER_HALF_HOUR;
+
+      if (earned <= 0) {
+        const restMinutes = MINING_HALF_HOUR_MIN - elapsedMinutes;
+        return `<quote id="${session.messageId}"/>⛏️ 挖矿进行中，已累计挖矿 ${cappedMinutes} 分钟，还需 ${restMinutes} 分钟即可获得 ${MINING_COINS_PER_HALF_HOUR} 金币。`;
+      }
+
+      // 发放金币到背包
+      const [existingGold] = await ctx.database.get('ggcevo_backpack', { user_id: handle, item_id: 1 });
+      const newGoldCount = (existingGold?.count || 0) + earned;
+      if (existingGold) {
+        await ctx.database.upsert('ggcevo_backpack', [{
+          user_id: handle, item_id: 1, count: newGoldCount
+        }]);
+      } else {
+        await ctx.database.create('ggcevo_backpack', {
+          user_id: handle, item_id: 1, count: newGoldCount
+        });
+      }
+
+      // 更新累计统计并重置本轮挖矿时间 (立即进入下一轮)
+      const newTotalMinutes = (mining.total_minutes || 0) + cappedMinutes;
+      const newTotalCoins = (mining.total_coins || 0) + earned;
+      await ctx.database.set('ggcevo_mining', { user_id: handle }, {
+        start_time: now,
+        total_minutes: newTotalMinutes,
+        total_coins: newTotalCoins,
+        update_time: now,
+      });
+
+      return `<quote id="${session.messageId}"/>⛏️ 挖矿结算！\n💰 获得 ${earned} 金币\n⏱️ 本轮挖矿 ${formatMiningDuration(cappedMinutes)}\n📊 累计挖矿 ${formatMiningDuration(newTotalMinutes)}，累计收益 ${newTotalCoins} 金币\n🌱 已自动进入下一轮挖矿。`;
     });
 
   ctx.command('ggcevo/兑换 <name:string>')
@@ -2894,6 +3054,15 @@ function toBeijingTime(isoString: string): string {
   const m = pad(beijingTime.getUTCMinutes());
   const s = pad(beijingTime.getUTCSeconds());
   return `${y}/${M}/${d} ${h}:${m}:${s}`;
+}
+
+function formatMiningDuration(minutes: number): string {
+  const totalMinutes = Math.floor(minutes);
+  const hours = Math.floor(totalMinutes / 60);
+  const mins = totalMinutes % 60;
+  if (hours <= 0) return `${mins}分钟`;
+  if (mins <= 0) return `${hours}小时`;
+  return `${hours}小时${mins}分`;
 }
 
 function translateEventType(eventType: string): string {
