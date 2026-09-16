@@ -33,7 +33,7 @@ export const Config: Schema<Config> = Schema.intersect([
   }).description('地图检测'),
 
   Schema.object({
-    curfewEnabled: Schema.boolean().description('是否启用宵禁(启用后0点-6点禁止签到和抽奖, 17点-24点禁止抽奖和挖矿)').default(false),
+    curfewEnabled: Schema.boolean().description('是否启用宵禁(启用后每晚17点-24点禁止签到、抽奖和挖矿)').default(false),
   }).description('宵禁设置'),
 
   Schema.object({
@@ -538,22 +538,13 @@ export function apply(ctx: Context, config: Config) {
   const checkCurfew = (type: 'signin' | 'lottery' | 'mining'): string | null => {
     if (!config.curfewEnabled) return null;
     const hour = new Date().getHours(); // 0-23
-    if (type === 'signin') {
-      // 0点-6点禁止签到 (0,1,2,3,4,5 共6小时, 6点已恢复)
-      if (hour < 6) {
-        return `🌙 宵禁时段（0:00-6:00），暂不能签到。`;
-      }
-    } else if (type === 'lottery') {
-      // 抽奖: 0点-6点 和 17点-24点 禁止
-      if (hour < 6) {
-        return `🌙 宵禁时段（0:00-6:00），暂不能抽奖。`;
-      }
-      if (hour >= 17) {
+    // 宵禁统一为每晚 17:00-24:00, 覆盖签到/抽奖/挖矿等咕咕之战玩法指令
+    if (hour >= 17) {
+      if (type === 'signin') {
+        return `🌙 宵禁时段（17:00-24:00），暂不能签到。`;
+      } else if (type === 'lottery') {
         return `🌙 宵禁时段（17:00-24:00），暂不能抽奖。`;
-      }
-    } else {
-      // 挖矿(咕咕之战玩法): 17点-24点禁止领取
-      if (hour >= 17) {
+      } else {
         return `🌙 宵禁时段（17:00-24:00），暂不能挖矿。`;
       }
     }
