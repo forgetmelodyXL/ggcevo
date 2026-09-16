@@ -2977,23 +2977,18 @@ export function apply(ctx: Context, config: Config) {
           `审核员: ${r.auditor || '-'}`,
           `审核时间: ${dateOnly(r.audit_time) || '-'}`,
           '',
-          '💡 每次最多展示3条, 回复 "下一页"/"上一页"/页码数字 翻页, 回复其他任意内容退出',
+          '💡 回复 "下一页"/"上一页"/页码数字 翻页, 回复其他任意内容退出',
         ].join('\n')
       }
 
-      // 每次指令最多展示3条记录, 第3条输出后自动退出查询
-      const MAX_VIEW = 3
       let page = 0
-      let viewCount = 0
       const sendPage = async (idx: number, withSync: boolean): Promise<void> => {
         const lines = [formatRecord(idx)]
         if (withSync) lines.push(`📊 数据最近同步: ${toBeijingTime(syncTime.toISOString())}`)
         await session.send(lines.join('\n'))
-        viewCount++
       }
 
       await sendPage(page, true)
-      if (viewCount >= MAX_VIEW) return '已退出封禁记录查询。'
 
       while (true) {
         const input = await session.prompt(60000)
@@ -3003,14 +2998,12 @@ export function apply(ctx: Context, config: Config) {
           if (page < records.length - 1) {
             page++
             await sendPage(page, false)
-            if (viewCount >= MAX_VIEW) break  // 第3条输出后自动退出
           }
           else await session.send('已是最后一页。回复 "上一页" 或其他任意内容退出。')
         } else if (/^(上一页|上页|prev|p|上一个)$/i.test(cmd)) {
           if (page > 0) {
             page--
             await sendPage(page, false)
-            if (viewCount >= MAX_VIEW) break
           }
           else await session.send('已是第一页。回复 "下一页" 或其他任意内容退出。')
         } else {
@@ -3018,7 +3011,6 @@ export function apply(ctx: Context, config: Config) {
           if (!isNaN(n) && n >= 1 && n <= records.length) {
             page = n - 1
             await sendPage(page, false)
-            if (viewCount >= MAX_VIEW) break
           } else {
             break  // 输入其他内容(含"退出")直接退出查询
           }
