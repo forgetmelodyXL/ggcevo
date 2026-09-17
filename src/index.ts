@@ -21,6 +21,8 @@ export interface Config {
   banNotifyGroups: string[]
   handleInactiveUnbindEnabled: boolean
   handleInactiveUnbindDays: number
+  /** 活动兑换管理员名字, 填写后兑换成功及兑换列表会提示向该管理员登记; 不填则不提醒 */
+  exchangeAdminName: string
 }
 
 export const Config: Schema<Config> = Schema.intersect([
@@ -35,6 +37,10 @@ export const Config: Schema<Config> = Schema.intersect([
   Schema.object({
     curfewEnabled: Schema.boolean().description('是否启用宵禁(启用后每晚17点-24点禁止抽奖和挖矿, 签到不受限制)').default(false),
   }).description('宵禁设置'),
+
+  Schema.object({
+    exchangeAdminName: Schema.string().description('活动兑换管理员名字(填写后, 兑换成功及兑换列表会提示向该管理员私聊登记, 不填则不提醒)').default(''),
+  }).description('活动兑换'),
 
   Schema.object({
     tencentDocsEnabled: Schema.boolean().description('是否启用腾讯文档功能').default(false),
@@ -1144,6 +1150,10 @@ export function apply(ctx: Context, config: Config) {
   ctx.command('ggcevo/兑换 <name:string>')
     .action(async (argv, name) => {
       const session = argv.session;
+      // 兑换成功及列表的登记提醒(仅在配置了活动兑换管理员名字时显示)
+      const adminRegistTip = config.exchangeAdminName
+        ? `\n📝 请在私聊中联系活动管理员 ${config.exchangeAdminName} 登记本次兑换信息。`
+        : '';
 
       const handle = await getHandle(session);
       if (!handle) {
@@ -1250,7 +1260,7 @@ export function apply(ctx: Context, config: Config) {
           create_time: now,
         });
 
-        return `🎁 兑换成功！\n消耗 ${costCount} 张兑换券\n获得 ${exchangeItem.name}\n💡 使用 \`使用 赎罪券\` 来消耗此道具`;
+        return `🎁 兑换成功！\n消耗 ${costCount} 张兑换券\n获得 ${exchangeItem.name}\n💡 使用 \`使用 赎罪券\` 来消耗此道具${adminRegistTip}`;
       }
 
       await ctx.database.create('ggcevo_exchange_log', {
@@ -1260,7 +1270,7 @@ export function apply(ctx: Context, config: Config) {
         create_time: now,
       });
 
-      return `🎁 兑换成功！\n消耗 ${costCount} 张兑换券\n获得 ${exchangeItem.name}（${exchangeItem.quality} - ${exchangeItem.type}）`;
+      return `🎁 兑换成功！\n消耗 ${costCount} 张兑换券\n获得 ${exchangeItem.name}（${exchangeItem.quality} - ${exchangeItem.type}）${adminRegistTip}`;
     });
 
   ctx.command('ggcevo/抽奖')
@@ -2019,7 +2029,9 @@ export function apply(ctx: Context, config: Config) {
       }
       message += `─────────────\n`;
       message += `⚠️ 兑换功能仅限工作日使用（周一至周五兑换，周六/周日实装进咕咕虫）\n`;
-      message += `⚠️ 兑换完成后请找活动管理员登记\n`;
+      if (config.exchangeAdminName) {
+        message += `⚠️ 兑换完成后请在私聊中联系活动管理员 ${config.exchangeAdminName} 登记\n`;
+      }
       return message;
     });
 
