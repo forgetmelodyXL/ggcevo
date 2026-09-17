@@ -1006,12 +1006,10 @@ export function apply(ctx: Context, config: Config) {
         lastAllowanceMonth = summary.last_allowance_month || 0;
       }
 
-      // 管理员福利: 从管理员福利数据库读取, 签到者QQ号与句柄必须同时匹配文档记录
-      const qq = String(session.userId || '')
+      // 管理员福利: 从管理员福利数据库读取, 仅校验签到句柄与文档记录匹配即可
       const normalizedHandle = normalizeHandle(handle)
       const welfareRecords = await ctx.database.get('ggcevo_admin_welfare', {})
       const isWelfareMember = welfareRecords.some(r =>
-        String(r.qq || '').trim() === qq.trim() &&
         r.handle && normalizeHandle(r.handle) === normalizedHandle
       )
 
