@@ -35,7 +35,7 @@ export const Config: Schema<Config> = Schema.intersect([
   }).description('地图检测'),
 
   Schema.object({
-    curfewEnabled: Schema.boolean().description('是否启用宵禁(启用后每晚17点-24点禁止抽奖和挖矿, 签到不受限制)').default(false),
+    curfewEnabled: Schema.boolean().description('是否启用宵禁(启用后每晚17点-24点禁止抽奖、挖矿和探索, 签到不受限制)').default(false),
   }).description('宵禁设置'),
 
   Schema.object({
@@ -132,6 +132,8 @@ declare module 'koishi' {
     ggcevo_ban_record: GgcEvoBanRecord
     ggcevo_admin_welfare: GgcEvoAdminWelfare
     ggcevo_mining: GgcEvoMiningState
+    ggcevo_explore: GgcEvoExploreState
+    ggcevo_explore_stats: GgcEvoExploreStat
   }
 }
 
@@ -202,6 +204,34 @@ export interface GgcEvoMiningState {
   /** 累计挖矿总时长(分钟) */
   total_minutes: number
   /** 累计挖矿收益金币总数 */
+  total_coins: number
+  /** 最近一次更新/领取时间 */
+  update_time: Date
+}
+
+export interface GgcEvoExploreState {
+  /** 探索身份标识, 复用游戏句柄字符串 */
+  user_id: string
+  /** 当前进行中的探索星系ID */
+  galaxy_id: number
+  /** 本轮探索开始时间 */
+  start_time: Date
+  /** 最近一次更新/领取时间 */
+  update_time: Date
+}
+
+export interface GgcEvoExploreStat {
+  /** 探索身份标识, 复用游戏句柄字符串 */
+  user_id: string
+  /** 星系ID */
+  galaxy_id: number
+  /** 累计探索次数 */
+  total_count: number
+  /** 累计成功次数 */
+  success_count: number
+  /** 累计失败次数 */
+  fail_count: number
+  /** 累计获得金币数(含失败安慰奖) */
   total_coins: number
   /** 最近一次更新/领取时间 */
   update_time: Date
@@ -450,6 +480,29 @@ export function apply(ctx: Context, config: Config) {
     primary: 'user_id',
   })
 
+  // ========== 数据库模型扩展 (探索) ==========
+
+  ctx.model.extend('ggcevo_explore', {
+    user_id: 'string',
+    galaxy_id: 'unsigned',
+    start_time: 'timestamp',
+    update_time: 'timestamp',
+  }, {
+    primary: 'user_id',
+  })
+
+  ctx.model.extend('ggcevo_explore_stats', {
+    user_id: 'string',
+    galaxy_id: 'unsigned',
+    total_count: 'unsigned',
+    success_count: 'unsigned',
+    fail_count: 'unsigned',
+    total_coins: 'unsigned',
+    update_time: 'timestamp',
+  }, {
+    primary: ['user_id', 'galaxy_id'],
+  })
+
   // ========== 地图检测定时任务 ==========
 
   if (config.mapMonitorEnabled && config.mapMonitorGroups.length > 0 && config.mapMonitorMapIds.length > 0) {
@@ -538,18 +591,20 @@ export function apply(ctx: Context, config: Config) {
 
   /**
    * 宵禁检查
-   * @param type 'lottery' | 'mining' (签到不受宵禁限制)
+   * @param type 'lottery' | 'mining' | 'explore' (签到不受宵禁限制)
    * @returns 拦截时返回提示消息字符串, 允许时返回 null
    */
-  const checkCurfew = (type: 'lottery' | 'mining'): string | null => {
+  const checkCurfew = (type: 'lottery' | 'mining' | 'explore'): string | null => {
     if (!config.curfewEnabled) return null;
     const hour = new Date().getHours(); // 0-23
-    // 宵禁为每晚 17:00-24:00, 仅限制抽奖和挖矿等咕咕之战玩法指令
+    // 宵禁为每晚 17:00-24:00, 仅限制抽奖/挖矿/探索等咕咕之战玩法指令
     if (hour >= 17) {
       if (type === 'lottery') {
         return `🌙 宵禁时段（17:00-24:00），暂不能抽奖。`;
-      } else {
+      } else if (type === 'mining') {
         return `🌙 宵禁时段（17:00-24:00），暂不能挖矿。`;
+      } else {
+        return `🌙 宵禁时段（17:00-24:00），暂不能探索。`;
       }
     }
     return null;
@@ -1143,6 +1198,158 @@ export function apply(ctx: Context, config: Config) {
       });
 
       return `<quote id="${session.messageId}"/>⛏️ 挖矿结算！\n💰 获得 ${earned} 金币\n⏱️ 本轮挖矿 ${formatMiningDuration(cappedMinutes)}\n📊 累计挖矿 ${formatMiningDuration(newTotalMinutes)}，累计收益 ${newTotalCoins} 金币\n🌱 已自动进入下一轮挖矿。`;
+    });
+
+  // ========== 探索 (咕咕之战) ==========
+  // 选择星系进行 12 小时探索, 结束后领取收益; 不同星系成功率/奖励不同
+
+  const EXPLORE_DURATION_MIN = 12 * 60 // 探索时长 12 小时
+
+  interface ExploreGalaxyConfig {
+    id: number
+    name: string
+    desc: string
+    successRate: number // 成功率(0-100)
+    successCoins: number // 成功获得金币
+    failCoins: number // 失败安慰金币(成功收益的一半)
+    items?: { itemId: number; min: number; max: number; rate: number }[] // 成功时独立判定的道具掉落
+  }
+
+  const EXPLORE_GALAXIES: ExploreGalaxyConfig[] = [
+    { id: 1, name: '天枢星系', desc: '成功率100%，成功获得80金币', successRate: 100, successCoins: 80, failCoins: 0 },
+    { id: 2, name: '赤潮星系', desc: '成功率60%，成功获得120金币，失败获得60金币', successRate: 60, successCoins: 120, failCoins: 60 },
+    {
+      id: 3, name: '千帆星系', desc: '成功率80%，成功获得50金币，失败获得25金币，成功时概率获得补签券/咕咕币',
+      successRate: 80, successCoins: 50, failCoins: 25,
+      items: [
+        { itemId: 9, min: 1, max: 1, rate: 10 }, // 补签券 x1 (10%)
+        { itemId: 2, min: 1, max: 3, rate: 50 }, // 咕咕币 1-3 (50%)
+      ],
+    },
+  ]
+
+  ctx.command('ggcevo/探索', '选择星系进行12小时探索, 结束后领取收益')
+    .action(async (argv) => {
+      const session = argv.session;
+      const curfewMsg = checkCurfew('explore');
+      if (curfewMsg) return `<quote id="${session.messageId}"/>${curfewMsg}`;
+      const handle = await getHandle(session);
+      if (!handle) {
+        return `<quote id="${session.messageId}"/>🔒 需要先绑定游戏句柄。\n💡 使用 \`绑定句柄\` 命令进行绑定。`;
+      }
+
+      const now = new Date();
+      const [explore] = await ctx.database.get('ggcevo_explore', { user_id: handle });
+
+      // 无进行中的探索: 先选择星系开始探索
+      if (!explore) {
+        const galaxyList = EXPLORE_GALAXIES.map(g => `${g.id}. ${g.name}（${g.desc}）`).join('\n');
+        await session.send(`<quote id="${session.messageId}"/>🛸 选择一个星系开始探索（探索时长 12 小时）：\n${galaxyList}\n请回复星系编号(1/2/3)选择，回复其他内容取消。`);
+        const choice = await session.prompt(30000);
+        if (!choice) return `🛸 已取消探索。`;
+        const galaxyId = parseInt(choice.trim(), 10);
+        const galaxy = EXPLORE_GALAXIES.find(g => g.id === galaxyId);
+        if (!galaxy) return `🛸 星系编号无效，已取消探索。`;
+
+        await ctx.database.create('ggcevo_explore', {
+          user_id: handle,
+          galaxy_id: galaxy.id,
+          start_time: now,
+          update_time: now,
+        });
+        return `<quote id="${session.messageId}"/>🛸 探索开始！你选择了「${galaxy.name}」。\n⏱️ 探索将持续 12 小时，届时使用 探索 命令领取收益。`;
+      }
+
+      const galaxy = EXPLORE_GALAXIES.find(g => g.id === explore.galaxy_id);
+      if (!galaxy) {
+        // 星系配置不存在(理论上不会发生), 重置探索状态
+        await ctx.database.remove('ggcevo_explore', { user_id: handle });
+        return `<quote id="${session.messageId}"/>⚠️ 当前探索的星系不存在，已重置，请重新选择星系开始探索。`;
+      }
+
+      // 未满 12 小时: 提示剩余时间
+      const elapsedMinutes = Math.floor((now.getTime() - new Date(explore.start_time).getTime()) / 60000);
+      if (elapsedMinutes < EXPLORE_DURATION_MIN) {
+        const restMinutes = EXPLORE_DURATION_MIN - elapsedMinutes;
+        return `<quote id="${session.messageId}"/>🛸 探索进行中：${galaxy.name}\n⏱️ 还需 ${formatMiningDuration(restMinutes)} 完成探索。`;
+      }
+
+      // 满 12 小时: 结算探索结果
+      const isSuccess = Math.random() * 100 < galaxy.successRate;
+      const gold = isSuccess ? galaxy.successCoins : galaxy.failCoins;
+      const rewardLines: string[] = [];
+      const gainedTexts: string[] = [];
+
+      // 成功时独立判定道具掉落(各道具概率互不影响, 失败无法获得任何道具)
+      const droppedItems: { itemId: number; count: number }[] = [];
+      if (isSuccess && galaxy.items) {
+        for (const item of galaxy.items) {
+          if (Math.random() * 100 >= item.rate) continue;
+          const count = item.min + Math.floor(Math.random() * (item.max - item.min + 1));
+          droppedItems.push({ itemId: item.itemId, count });
+        }
+      }
+
+      // 发放金币
+      if (gold > 0) {
+        const [existingGold] = await ctx.database.get('ggcevo_backpack', { user_id: handle, item_id: 1 });
+        const newGoldCount = (existingGold?.count || 0) + gold;
+        if (existingGold) {
+          await ctx.database.upsert('ggcevo_backpack', [{
+            user_id: handle, item_id: 1, count: newGoldCount
+          }]);
+        } else {
+          await ctx.database.create('ggcevo_backpack', {
+            user_id: handle, item_id: 1, count: newGoldCount
+          });
+        }
+        rewardLines.push(`💰 获得 ${gold} 金币`);
+      }
+
+      // 发放道具
+      for (const g of droppedItems) {
+        const [existing] = await ctx.database.get('ggcevo_backpack', { user_id: handle, item_id: g.itemId });
+        const newCount = (existing?.count || 0) + g.count;
+        if (existing) {
+          await ctx.database.upsert('ggcevo_backpack', [{
+            user_id: handle, item_id: g.itemId, count: newCount
+          }]);
+        } else {
+          await ctx.database.create('ggcevo_backpack', {
+            user_id: handle, item_id: g.itemId, count: newCount
+          });
+        }
+        gainedTexts.push(`${ItemConfig[g.itemId] || `道具#${g.itemId}`} x${g.count}`);
+      }
+      if (gainedTexts.length) {
+        rewardLines.push(`🎁 获得：${gainedTexts.join('、')}`);
+      }
+
+      // 更新探索统计(按星系维度)
+      const [stat] = await ctx.database.get('ggcevo_explore_stats', { user_id: handle, galaxy_id: galaxy.id });
+      const newStat = {
+        user_id: handle,
+        galaxy_id: galaxy.id,
+        total_count: (stat?.total_count || 0) + 1,
+        success_count: (stat?.success_count || 0) + (isSuccess ? 1 : 0),
+        fail_count: (stat?.fail_count || 0) + (isSuccess ? 0 : 1),
+        total_coins: (stat?.total_coins || 0) + gold,
+        update_time: now,
+      };
+      if (stat) {
+        await ctx.database.upsert('ggcevo_explore_stats', [newStat]);
+      } else {
+        await ctx.database.create('ggcevo_explore_stats', newStat);
+      }
+
+      // 清除本轮探索, 便于用户重新选择星系开始下一轮
+      await ctx.database.remove('ggcevo_explore', { user_id: handle });
+
+      const resultMsg = isSuccess
+        ? `🛸 探索完成！「${galaxy.name}」探索成功！`
+        : `🛸 探索完成！「${galaxy.name}」探索失败，获得安慰奖。`;
+      const body = rewardLines.length ? `\n${rewardLines.join('\n')}` : '';
+      return `<quote id="${session.messageId}"/>${resultMsg}${body}\n📊 该星系累计探索 ${newStat.total_count} 次，成功 ${newStat.success_count} 次，累计获得 ${newStat.total_coins} 金币\n🛸 可再次使用 探索 命令选择星系开启新的探索。`;
     });
 
   ctx.command('ggcevo/兑换 <name:string>')
