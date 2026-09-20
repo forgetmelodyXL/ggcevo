@@ -96,14 +96,12 @@ npm install koishi-plugin-ggcevo
 | `查询 [handle]` | — | 查询某游戏句柄是否已被绑定 |
 | `解绑 [index]` | 解绑句柄 | 解除绑定某个游戏句柄 |
 | `迁移 <qq>` | — | 将指定QQ号绑定的全部游戏句柄迁移到当前账号（用于从 onebot 机器人切换至 QQ 官方机器人后，将旧 QQ 号下绑定的句柄转移到新的 openid 身份下） |
-| `地图检测` | — | 查询已配置地图（`mapMonitorMapIds`）的检测状态：在线状态、最后状态变更时间、24h/30d离线次数、近期事件。当所有配置地图均离线时，底部额外提示推荐游玩的地图名称（需配置 `mapMonitorRecommendMapName`）。需开启 `mapMonitorEnabled` 且配置地图ID |
-| `菜单` | ggcevo指令 | 渲染 GGCEVO 句柄管理指令菜单图片（绑定/句柄/切换/查询/解绑/地图检测/封禁记录）。需安装启用 puppeteer 服务（`koishi-plugin-puppeteer` 或 `@shangxueink/puppeteer-without-canvas` 任选其一） |
+| `地图检测` | — | — | 查询已配置地图（`mapMonitorMapIds`）的检测状态：在线状态、最后状态变更时间、24h/30d离线次数、近期事件。当所有配置地图均离线时，底部额外提示推荐游玩的地图名称（需配置 `mapMonitorRecommendMapName`）。需开启 `mapMonitorEnabled` 且配置地图ID |
 
 ### 签到与虚拟物品（ggcevo）
 
 | 指令 | 别名 | 权限 | 说明 |
 | --- | --- | --- | --- |
-| `咕咕之战` | — | — | 渲染咕咕之战玩法指令菜单图片（签到/抽奖/兑换/背包/个人信息/兑换列表/活动列表/领取活动/补签/使用/挖矿/探索）。需安装启用 puppeteer 服务（`koishi-plugin-puppeteer` 或 `@shangxueink/puppeteer-without-canvas` 任选其一） |
 | `签到` | — | — | 每日签到，获取奖励并发放签到券/补签券等。每月首次签到时，若签到者的游戏句柄匹配管理员福利文档记录，额外发放 50 咕咕币津贴（仅校验句柄） |
 | `挖矿` | — | — | 领取挂机挖矿收益（咕咕之战玩法）。每半小时收益 4 金币，单次存储上限 24 小时，领取后立即进入下一轮挖矿。累计挖矿总时长与累计收益金币数会被记录统计。受宵禁影响：17:00-24:00 禁止领取 |
 | `探索` | — | — | 选择星系进行 12 小时探索，结束后领取收益（咕咕之战玩法）。星系：天枢（成功率100%，成功80金币）、赤潮（成功率60%，成功120金币/失败60金币）、千帆（成功率80%，成功50金币/失败25金币，成功时独立概率获得补签券×1（10%）、咕咕币1-3枚（50%），失败无道具）。金币/道具发放到背包，按星系累计统计探索次数/成功次数/累计金币。受宵禁影响：17:00-24:00 禁止 |
@@ -173,6 +171,11 @@ npm install koishi-plugin-ggcevo
 - `ggcevo_explore_stats` — 探索统计（复合主键 `user_id` + `galaxy_id`；含探索次数 `total_count`、成功次数 `success_count`、失败次数 `fail_count`、累计获得金币 `total_coins`）
 
 ## 更新日志
+
+### v1.2.0
+
+- **移除指令菜单功能**：删除 `咕咕之战` 与 `菜单`（别名 `ggcevo指令`）指令及其渲染代码（renderMenuImage / buildMenuHtml / 菜单分组数据）
+- **移除 puppeteer 依赖**：删除对 `koishi-plugin-puppeteer` 与 `@shangxueink/puppeteer-without-canvas` 的可选依赖声明、`puppeteer` 服务注入及 `import type` 引用。插件不再依赖任何图片渲染服务
 
 ### v1.1.20
 
