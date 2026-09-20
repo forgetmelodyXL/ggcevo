@@ -334,6 +334,24 @@ export interface ActivityClaimLog {
 }
 
 export function apply(ctx: Context, config: Config) {
+  // ========== 引用回复 ==========
+
+  // 除咕咕之战指令外, 其余指令的回复统一添加引用回复(quote)
+  // 1) command/before-execute 阶段给本插件的会话打标记
+  // 2) before-send 阶段给带标记会话的回复前置 <quote> 引用原消息
+  ctx.root.on('command/before-execute', (argv) => {
+    if (argv.command?.ctx === ctx && argv.command.name !== '咕咕之战') {
+      ;(argv.session as any)['ggcevoQuote'] = true
+    }
+  })
+  ctx.root.before('send', (session, options) => {
+    const source = options.session as any
+    // 回复已自带 <quote> 的指令(如句柄绑定/切换)不再叠加引用, 避免双引用
+    if (source?.['ggcevoQuote'] && !session.elements?.some((el) => el.type === 'quote')) {
+      session.elements?.unshift(h('quote', { id: source.messageId }))
+    }
+  })
+
   // ========== 调试模式 ==========
 
   // 调试日志辅助: 仅配置启用 debugEnabled 时输出到 Koishi 日志
@@ -3513,7 +3531,6 @@ export function apply(ctx: Context, config: Config) {
   }
 
   ctx.command('咕咕之战', '查看咕咕之战内容分类菜单')
-    .alias('菜单')
     .action(async ({ session }) => {
       if (config.menuStyle === 'image') {
         const dataUrl = await renderMenuImage(buildMenuHtml('咕咕之战', '内容分类菜单 · 输入指令名即可使用'))
