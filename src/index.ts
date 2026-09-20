@@ -1,4 +1,4 @@
-import { Context, Schema, h } from 'koishi'
+import { Context, Schema, h, Session } from 'koishi'
 import type {} from 'koishi-plugin-puppeteer'
 import fs from 'node:fs'
 import path from 'node:path'
@@ -3441,15 +3441,15 @@ export function apply(ctx: Context, config: Config) {
   // 图片菜单磁盘缓存目录 (按 HTML 内容 hash, 命中缓存免去重复渲染, 与 preview-help 同方案)
   const menuCacheDir = path.resolve(ctx.baseDir, 'data/ggcevo/menu')
 
-  // 用 puppeteer 将 HTML 渲染为图片返回; 未启用 puppeteer 或渲染失败时返回错误提示文本
-  const renderMenuImage = async (html: string): Promise<string | h> => {
+  // 用 puppeteer 将 HTML 渲染为图片, 返回 base64 data URL 字符串; 失败时返回以 ⚠️ 开头的错误提示文本
+  const renderMenuImage = async (html: string): Promise<string> => {
     const logger = ctx.logger('ggcevo')
     // 1. 按 HTML 内容 hash 计算缓存文件名, 命中则直接读回 base64, 无需 puppeteer
     const hash = createHash('sha256').update(html).digest('hex')
     const cachePath = path.resolve(menuCacheDir, `${hash}.jpg`)
     if (fs.existsSync(cachePath)) {
       const cached = await readFile(cachePath)
-      return h.image(`data:image/jpeg;base64,${cached.toString('base64')}`)
+      return `data:image/jpeg;base64,${cached.toString('base64')}`
     }
     if (!ctx.puppeteer) {
       logger.warn('[menu-render] 未启用 puppeteer 服务')
@@ -3471,8 +3471,7 @@ export function apply(ctx: Context, config: Config) {
       } catch (e) {
         logger.error('[menu-render] 写入菜单图缓存失败: %o', e)
       }
-      // 以 base64 data URL 发送(与 preview-help 插件同方案), QQ 官方适配器可直接提取 base64 上传
-      return h.image(`data:image/jpeg;base64,${img.toString('base64')}`)
+      return `data:image/jpeg;base64,${img.toString('base64')}`
     } catch (e) {
       logger.warn('[menu-render] 渲染菜单图片失败: %o', e)
       return '⚠️ 菜单图片渲染失败，请查看日志后重试。'
@@ -3481,12 +3480,47 @@ export function apply(ctx: Context, config: Config) {
     }
   }
 
+  // 将菜单图发送到目标会话: QQ 官方机器人走手动上传+发送并记录 QQ 真实响应(绕过适配器静默吞错), 其余平台直接发图(与 preview-help 一致, 不带引用)
+  const sendMenuImage = async (session: Session, dataUrl: string): Promise<string | h> => {
+    const logger = ctx.logger('ggcevo')
+    if (!dataUrl.startsWith('data:image')) return dataUrl // 渲染失败的错误提示文本
+    if (session.platform !== 'qq') return h.image(dataUrl)
+    const bot = session.bot as any
+    const match = /^data:image\/[\w.+-]+;base64,(.*)$/.exec(dataUrl)
+    if (!match) return '⚠️ 菜单图片数据无效。'
+    try {
+      const fileData = match[1]
+      // 被动回复需要递增的 msg_seq (与 adapter-qq flush 行为一致, 存到会话对象上)
+      const msgSeq = (session['seq'] || 0) + 1
+      session['seq'] = msgSeq
+      if (session.isDirect) {
+        const fileRes = await bot.internal.sendFilePrivate(session.userId, { file_type: 1, srv_send_msg: false, file_data: fileData })
+        logger.info('[menu-render] QQ 官方图片上传响应: %o', fileRes)
+        await bot.internal.sendPrivateMessage(session.channelId, {
+          msg_type: 7, media: fileRes, content: '', msg_id: session.messageId, msg_seq: msgSeq,
+        })
+      } else {
+        const fileRes = await bot.internal.sendFileGuild(session.channelId, { file_type: 1, srv_send_msg: false, file_data: fileData })
+        logger.info('[menu-render] QQ 官方图片上传响应: %o', fileRes)
+        const msgRes = await bot.internal.sendMessage(session.channelId, {
+          msg_type: 7, media: fileRes, content: '', msg_id: session.messageId, msg_seq: msgSeq,
+        })
+        logger.info('[menu-render] QQ 官方消息发送响应: %o', msgRes)
+        if (msgRes?.audit_id) logger.warn('[menu-render] QQ 消息进入审核(audit_id=%s), 需开启 MESSAGE_AUDIT intent 才能确认最终是否发出', msgRes.audit_id)
+      }
+      return
+    } catch (e) {
+      logger.error('[menu-render] QQ 官方发送菜单图失败: %o', e)
+      return '⚠️ QQ 发送菜单图失败，请查看日志中的错误信息。'
+    }
+  }
+
   ctx.command('咕咕之战', '查看咕咕之战内容分类菜单')
     .alias('菜单')
     .action(async ({ session }) => {
       if (config.menuStyle === 'image') {
-        const result = await renderMenuImage(buildMenuHtml('咕咕之战', '内容分类菜单 · 输入指令名即可使用'))
-        return typeof result === 'string' ? result : h('quote', { id: session.messageId }, result)
+        const dataUrl = await renderMenuImage(buildMenuHtml('咕咕之战', '内容分类菜单 · 输入指令名即可使用'))
+        return sendMenuImage(session, dataUrl)
       }
       return buildTextMenu()
     })

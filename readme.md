@@ -179,6 +179,14 @@ npm install koishi-plugin-ggcevo
 
 ## 更新日志
 
+### v1.3.3
+
+修复 QQ 官方机器人不发送图片菜单且无报错的问题。
+
+- **移除图片消息的引用回复**：`咕咕之战` 图片菜单不再包裹 `<quote>` 引用（与 preview-help 一致，裸发图片）。此前消息同时携带 `message_reference` + 被动回复 `msg_id` + `media` 的组合，在 QQ 官方接口下可能被静默丢弃
+- **QQ 官方机器人手动发送 + 真实响应日志**：图片模式下，QQ 平台不再走适配器（适配器会吞掉 QQ 接口错误导致「无报错」），改为插件直接调用 QQ 官方富媒体上传（`/v2/groups/{id}/files`）与消息发送接口，并将 QQ 真实返回（含 `file_uuid`/`audit_id`/错误码）输出到 `[menu-render]` 日志；若返回 `audit_id`（消息进入审核）会额外警告，提示需开启 `MESSAGE_AUDIT` intent
+- **非 QQ 平台**：图片直接发送，不再带引用
+
 ### v1.3.2
 
 图片菜单渲染对齐 preview-help 方案，新增磁盘缓存。
