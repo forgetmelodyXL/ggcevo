@@ -1427,19 +1427,29 @@ export function apply(ctx: Context, config: Config) {
       const dataUrl = `data:image/png;base64,${img.toString('base64')}`;
       const sizeKB = (img.length / 1024).toFixed(1);
       logger.info('[menu-render] 截图完成(PNG), 体积 %s KB, 生成 data URL 长度 %d', sizeKB, dataUrl.length);
-      // 诊断: QQ 官方机器人手动调用上传接口, 绕过适配器吞错, 暴露 QQ 真实返回的错误码
-      if (session?.bot?.http && session.platform === 'qq') {
-        try {
-          const uploadPath = session.isDirect
-            ? `/v2/users/${session.userId}/files`
-            : `/v2/groups/${session.channelId}/files`;
-          const uploadRes = await session.bot.http.post(uploadPath, {
-            file_type: 1,
-            file_data: img.toString('base64'),
-          });
-          logger.info('[menu-render] QQ 上传探测成功: %o', uploadRes);
-        } catch (e: any) {
-          logger.warn('[menu-render] QQ 上传探测失败: %s | 响应: %o', e?.message, e?.response?.data);
+      // QQ 官方机器人: 调大上传阈值, 使菜单图(约4.4MB)走普通上传(file_data)通道而非分片上传。
+      // 经验证分片上传(upload_prepare)通道在部分环境不可用且错误被适配器静默吞掉,
+      // 而普通上传(file_data 直接 POST /v2/groups/{id}/files)可用。
+      if (session?.bot && session.platform === 'qq') {
+        const bot = session.bot as any;
+        if (bot.config && bot.config.uploadThreshold !== 10 * 1024 * 1024) {
+          bot.config.uploadThreshold = 10 * 1024 * 1024;
+          logger.info('[menu-render] 已调整 QQ 上传阈值至 10MB, 菜单图改走普通上传通道');
+        }
+        // 诊断: 调试模式下直接调用 QQ 上传接口, 绕过适配器吞错, 暴露 QQ 真实返回结果或错误码
+        if (config.debugEnabled) {
+          try {
+            const uploadPath = session.isDirect
+              ? `/v2/users/${session.userId}/files`
+              : `/v2/groups/${session.channelId}/files`;
+            const uploadRes = await session.bot.http.post(uploadPath, {
+              file_type: 1,
+              file_data: img.toString('base64'),
+            });
+            logger.info('[menu-render] QQ 上传探测成功: %o', uploadRes);
+          } catch (e: any) {
+            logger.warn('[menu-render] QQ 上传探测失败: %s | 响应: %o', e?.message, e?.response?.data);
+          }
         }
       }
       return h.image(dataUrl);
