@@ -3332,14 +3332,13 @@ export function apply(ctx: Context, config: Config) {
     key: string
     label: string
     emoji: string   // 文字菜单中的分类图标
-    desc: string
     items: MenuItem[]
   }
 
   // 菜单分类数据 (仅收录普通用户可用的指令)
   const menuCategories: MenuCategory[] = [
     {
-      key: 'daily', label: '每日玩法', emoji: '📅', desc: '签到 / 挖矿 / 探索 / 补签',
+      key: 'daily', label: '每日玩法', emoji: '📅',
       items: [
         { key: 'sign', icon: '签', label: '签到', desc: '每日签到, 获取金币与咕咕币' },
         { key: 'mine', icon: '挖', label: '挖矿', desc: '领取挂机挖矿收益(每半小时4金币)' },
@@ -3348,7 +3347,7 @@ export function apply(ctx: Context, config: Config) {
       ],
     },
     {
-      key: 'bag', label: '物品背包', emoji: '🎒', desc: '背包 / 个人信息 / 使用',
+      key: 'bag', label: '物品背包', emoji: '🎒',
       items: [
         { key: 'inv', icon: '包', label: '背包', desc: '查看自己的物品背包' },
         { key: 'profile', icon: '信', label: '个人信息', desc: '查看签到统计与个人信息' },
@@ -3356,7 +3355,7 @@ export function apply(ctx: Context, config: Config) {
       ],
     },
     {
-      key: 'lottery', label: '抽奖兑换', emoji: '🎲', desc: '抽奖 / 抽奖概率 / 兑换 / 兑换列表',
+      key: 'lottery', label: '抽奖兑换', emoji: '🎲',
       items: [
         { key: 'lottery', icon: '抽', label: '抽奖', desc: '抽奖, 可加选项 -p 奖池ID -c 次数' },
         { key: 'odds', icon: '率', label: '抽奖概率', desc: '查看各奖池抽奖概率与保底说明' },
@@ -3365,14 +3364,14 @@ export function apply(ctx: Context, config: Config) {
       ],
     },
     {
-      key: 'activity', label: '活动', emoji: '🎉', desc: '活动列表 / 领取活动',
+      key: 'activity', label: '活动', emoji: '🎉',
       items: [
         { key: 'actList', icon: '活', label: '活动列表', desc: '查看进行中的活动(参数"全部"查看全部)' },
         { key: 'actClaim', icon: '领', label: '领取活动', desc: '领取指定(或最新)活动奖励' },
       ],
     },
     {
-      key: 'handle', label: '句柄绑定', emoji: '🔗', desc: '绑定 / 句柄 / 切换 / 查询 / 解绑 / 迁移',
+      key: 'handle', label: '句柄绑定', emoji: '🔗',
       items: [
         { key: 'bind', icon: '绑', label: '绑定 <句柄>', desc: '绑定星际争霸2游戏句柄' },
         { key: 'list', icon: '句', label: '句柄', desc: '查询已绑定的游戏句柄' },
@@ -3383,7 +3382,7 @@ export function apply(ctx: Context, config: Config) {
       ],
     },
     {
-      key: 'query', label: '查询信息', emoji: '📊', desc: '地图检测 / 封禁记录 / 签到奖励',
+      key: 'query', label: '查询信息', emoji: '📊',
       items: [
         { key: 'map', icon: '图', label: '地图检测', desc: '查询已配置地图的检测状态' },
         { key: 'ban', icon: '封', label: '封禁记录', desc: '查询句柄的封禁记录' },
@@ -3396,7 +3395,7 @@ export function apply(ctx: Context, config: Config) {
   const buildTextMenu = () => [
     '🐤 咕咕之战菜单',
     '',
-    ...menuCategories.map(cat => `${cat.emoji} ${cat.label}（${cat.desc}）\n  ${cat.items.map(item => item.label).join(' / ')}`),
+    ...menuCategories.map(cat => `${cat.emoji} ${cat.label}\n  ${cat.items.map(item => item.label).join(' / ')}`),
     '',
     '提示: 直接输入上方指令名即可使用对应功能。',
   ].join('\n')
