@@ -1,4 +1,5 @@
 import { Context, Schema, h } from 'koishi'
+import type {} from 'koishi-plugin-puppeteer'
 
 export const name = 'ggcevo'
 
@@ -63,6 +64,7 @@ export const Config: Schema<Config> = Schema.intersect([
 
 export const inject = {
   required: ['database'],
+  optional: ['puppeteer'],
 }
 
 export const ItemConfig: Record<number, string> = {
@@ -1350,6 +1352,110 @@ export function apply(ctx: Context, config: Config) {
         : `🛸 探索完成！「${galaxy.name}」探索失败，获得安慰奖。`;
       const body = rewardLines.length ? `\n${rewardLines.join('\n')}` : '';
       return `<quote id="${session.messageId}"/>${resultMsg}${body}\n📊 该星系累计探索 ${newStat.total_count} 次，成功 ${newStat.success_count} 次，累计获得 ${newStat.total_coins} 金币\n🛸 可再次使用 探索 命令选择星系开启新的探索。`;
+    });
+
+  // ========== 指令菜单 (puppeteer 渲染图片) ==========
+
+  // 用 puppeteer 将 HTML 渲染为图片返回; 未安装 puppeteer 时降级为文本提示
+  const renderMenuImage = async (html: string) => {
+    if (!ctx.puppeteer) {
+      return '⚠️ 未安装 koishi-plugin-puppeteer，无法渲染菜单图片，请先安装启用该插件。';
+    }
+    const page = await ctx.puppeteer.page();
+    try {
+      await page.setViewport({ width: 640, height: 800, deviceScaleFactor: 2 });
+      await page.setContent(html, { waitUntil: 'networkidle0' });
+      const img = await page.screenshot({ type: 'png', fullPage: true });
+      return h.image(img, 'image/png');
+    } finally {
+      await page.close();
+    }
+  };
+
+  const buildMenuHtml = (title: string, subtitle: string, items: { icon: string; name: string; desc: string }[]): string => {
+    const itemRows = items.map(item => `
+      <div class="item">
+        <div class="icon">${item.icon}</div>
+        <div class="info">
+          <div class="name">${item.name}</div>
+          <div class="desc">${item.desc}</div>
+        </div>
+      </div>`).join('');
+    return `<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<style>
+  body { margin: 0; padding: 24px 28px; background: linear-gradient(135deg, #1b2a4a 0%, #0f1a33 100%); font-family: "Microsoft YaHei", "PingFang SC", sans-serif; color: #e8eefc; }
+  .header { text-align: center; padding-bottom: 18px; border-bottom: 2px solid rgba(120,160,255,0.35); }
+  .title { font-size: 32px; font-weight: bold; letter-spacing: 6px; color: #8fc0ff; text-shadow: 0 0 18px rgba(90,140,255,0.45); }
+  .subtitle { margin-top: 8px; font-size: 14px; color: #93a6c8; }
+  .list { margin-top: 20px; display: flex; flex-direction: column; gap: 12px; }
+  .item { display: flex; align-items: center; gap: 14px; background: rgba(255,255,255,0.07); border: 1px solid rgba(140,170,255,0.22); border-radius: 12px; padding: 12px 16px; }
+  .icon { font-size: 26px; width: 40px; text-align: center; }
+  .info { flex: 1; }
+  .name { font-size: 20px; font-weight: bold; color: #ffffff; }
+  .desc { margin-top: 4px; font-size: 13px; color: #9db1d8; line-height: 1.5; }
+  .footer { margin-top: 20px; text-align: center; font-size: 12px; color: #6b7ea6; }
+</style>
+</head>
+<body>
+  <div class="header">
+    <div class="title">${title}</div>
+    <div class="subtitle">${subtitle}</div>
+  </div>
+  <div class="list">${itemRows}</div>
+  <div class="footer">输入上方指令名即可使用对应功能</div>
+</body>
+</html>`;
+  };
+
+  // 咕咕之战玩法指令菜单 (普通用户可用的玩法指令)
+  const gameMenuItems = [
+    { icon: '📅', name: '签到', desc: '每日签到，获取签到券/补签券等奖励，每月首次签到可领津贴' },
+    { icon: '🎰', name: '抽奖', desc: '使用金币/咕咕币/兑换券参与抽奖，选项：-p 奖池ID -c 次数' },
+    { icon: '🎁', name: '兑换', desc: '使用兑换券兑换皮肤/宠物/入场特效/角色冠名权等物品' },
+    { icon: '🎒', name: '背包', desc: '查看自己背包中的物品' },
+    { icon: '👤', name: '个人信息', desc: '查看自己的签到统计与个人信息' },
+    { icon: '📜', name: '兑换列表', desc: '查看可兑换物品列表及兑换券消耗' },
+    { icon: '🏆', name: '活动列表', desc: '查看进行中/未开始的活动' },
+    { icon: '🎉', name: '领取活动', desc: '领取指定(或最新)活动奖励' },
+    { icon: '🩹', name: '补签', desc: '使用补签券补签漏签的日期' },
+    { icon: '🔧', name: '使用', desc: '使用指定物品(如赎罪券等)' },
+    { icon: '⛏️', name: '挖矿', desc: '挂机挖矿，每半小时收益4金币，上限24小时，领取后自动进入下一轮' },
+    { icon: '🛸', name: '探索', desc: '选择星系进行12小时探索，探索结束领取金币/道具收益' },
+  ];
+
+  // GGCEVO 句柄管理指令菜单 (普通用户可用的句柄/查询指令)
+  const handleMenuItems = [
+    { icon: '🔗', name: '绑定句柄', desc: '绑定星际争霸2游戏句柄，格式：[区域ID]-S2-[服务器ID]-[档案ID]' },
+    { icon: '🔍', name: '句柄', desc: '查询自己(或他人)已绑定的游戏句柄' },
+    { icon: '🔄', name: '切换', desc: '切换正在使用的游戏句柄' },
+    { icon: '❓', name: '查询', desc: '查询某游戏句柄是否已被绑定' },
+    { icon: '🔓', name: '解绑句柄', desc: '解除绑定某个游戏句柄' },
+    { icon: '🗺️', name: '地图检测', desc: '查询已配置地图的在线状态与离线统计' },
+    { icon: '🚫', name: '封禁记录', desc: '查询自己(或他人)的封禁记录，支持翻页' },
+  ];
+
+  ctx.command('ggcevo/咕咕之战', '查看咕咕之战玩法指令菜单')
+    .action(async (argv) => {
+      const session = argv.session;
+      const html = buildMenuHtml('咕咕之战', '游戏玩法指令（受宵禁影响的玩法见对应指令说明）', gameMenuItems);
+      const result = await renderMenuImage(html);
+      return typeof result === 'string'
+        ? result
+        : h('quote', { id: session.messageId }, result);
+    });
+
+  ctx.command('ggcevo/菜单', '查看 GGCEVO 句柄管理指令菜单')
+    .alias('ggcevo指令')
+    .action(async (argv) => {
+      const session = argv.session;
+      const html = buildMenuHtml('GGCEVO', '句柄管理与查询指令', handleMenuItems);
+      const result = await renderMenuImage(html);
+      return typeof result === 'string'
+        ? result
+        : h('quote', { id: session.messageId }, result);
     });
 
   ctx.command('ggcevo/兑换 <name:string>')
@@ -2779,7 +2885,7 @@ export function apply(ctx: Context, config: Config) {
   }
 
   // 查看腾讯文档状态 (显示当前模式与令牌信息)
-  ctx.command('腾讯文档/授权状态', '查看腾讯文档授权状态')
+  ctx.command('腾讯文档/授权状态', '查看腾讯文档授权状态', { authority: 3 })
     .action(async () => {
       if (!isDocsConfigured()) return '❌ 腾讯文档功能未启用或配置不完整。'
       const token = await getValidDocsToken()
