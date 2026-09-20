@@ -1363,10 +1363,11 @@ export function apply(ctx: Context, config: Config) {
     }
     const page = await ctx.puppeteer.page();
     try {
-      await page.setViewport({ width: 640, height: 800, deviceScaleFactor: 2 });
+      await page.setViewport({ width: 640, height: 800, deviceScaleFactor: 1 });
       await page.setContent(html, { waitUntil: 'networkidle0' });
-      const img = await page.screenshot({ type: 'png', fullPage: true });
-      return h.image(img, 'image/png');
+      // JPEG 压缩输出，显著减小体积以兼容 QQ 官方机器人素材限制
+      const img = await page.screenshot({ type: 'jpeg', quality: 85, fullPage: true });
+      return h.image(img, 'image/jpeg');
     } finally {
       await page.close();
     }

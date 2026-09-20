@@ -174,6 +174,10 @@ npm install koishi-plugin-ggcevo
 
 ## 更新日志
 
+### v1.1.12
+
+- **指令菜单图改为 JPEG 压缩输出**：`咕咕之战`/`菜单` 渲染分辨率由 1280×1600（2x）降为 640×800（1x），截图格式由 PNG 改为 JPEG（quality 85），体积缩小约 10 倍，以兼容 QQ 官方机器人对图片素材的大小/格式限制（适配器对 Buffer 图片走素材上传接口，正式环境限制较严）
+
 ### v1.1.11
 
 - **兼容 `@shangxueink/puppeteer-without-canvas`**：声明其可选依赖（`^3.0.7`），与 `koishi-plugin-puppeteer`（`^3.9.0`）**任选其一**安装启用即可提供 `puppeteer` 服务渲染指令菜单图片（均标记为可选 peer 依赖）
