@@ -3285,6 +3285,213 @@ export function apply(ctx: Context, config: Config) {
       }
       return '已退出封禁记录查询。'
     })
+
+  // ========== 咕咕之战菜单 (QQ 官方机器人 Markdown 按钮) ==========
+
+  interface MenuItem {
+    key: string
+    label: string
+    desc: string
+    cmd?: string    // 点击后执行的指令叶名称(如 '签到'), 无则不执行
+    input?: string  // 需要输入参数时的输入框提示语
+  }
+
+  interface MenuCategory {
+    key: string
+    label: string
+    desc: string
+    items: MenuItem[]
+  }
+
+  // 按钮 id 统一加前缀, 避免与其它插件的按钮回调冲突
+  const MENU_PREFIX = 'ggg:'
+
+  // 菜单分类数据 (仅收录普通用户可用的指令)
+  const menuCategories: MenuCategory[] = [
+    {
+      key: 'daily', label: '📅 每日玩法', desc: '签到 / 挖矿 / 探索 / 补签',
+      items: [
+        { key: 'sign', label: '签到', desc: '每日签到, 获取金币与咕咕币', cmd: '签到' },
+        { key: 'mine', label: '挖矿', desc: '领取挂机挖矿收益(每半小时4金币)', cmd: '挖矿' },
+        { key: 'explore', label: '探索', desc: '选择星系进行12小时探索', cmd: '探索' },
+        { key: 'makeup', label: '补签', desc: '使用补签券补签漏签日期', cmd: '补签' },
+      ],
+    },
+    {
+      key: 'bag', label: '🎒 物品背包', desc: '背包 / 个人信息 / 使用',
+      items: [
+        { key: 'inv', label: '背包', desc: '查看自己的物品背包', cmd: '背包' },
+        { key: 'profile', label: '个人信息', desc: '查看签到统计与个人信息', cmd: '个人信息' },
+        { key: 'use', label: '使用 <名称>', desc: '使用指定物品(如赎罪券等)', cmd: '使用', input: '请输入要使用的物品名称' },
+      ],
+    },
+    {
+      key: 'lottery', label: '🎲 抽奖兑换', desc: '抽奖 / 抽奖概率 / 兑换 / 兑换列表',
+      items: [
+        { key: 'lottery', label: '抽奖', desc: '抽奖, 可加选项 -p 奖池ID -c 次数', cmd: '抽奖' },
+        { key: 'odds', label: '抽奖概率', desc: '查看各奖池抽奖概率与保底说明', cmd: '抽奖概率' },
+        { key: 'exchange', label: '兑换 <名称>', desc: '使用兑换券兑换物品', cmd: '兑换', input: '请输入要兑换的物品名称' },
+        { key: 'exchangeList', label: '兑换列表', desc: '查看可兑换物品列表', cmd: '兑换列表' },
+      ],
+    },
+    {
+      key: 'activity', label: '🎉 活动', desc: '活动列表 / 领取活动',
+      items: [
+        { key: 'actList', label: '活动列表', desc: '查看进行中的活动(参数"全部"查看全部)', cmd: '活动列表' },
+        { key: 'actClaim', label: '领取活动', desc: '领取指定(或最新)活动奖励', cmd: '领取活动' },
+      ],
+    },
+    {
+      key: 'handle', label: '🔗 句柄绑定', desc: '绑定 / 句柄 / 切换 / 查询 / 解绑 / 迁移',
+      items: [
+        { key: 'bind', label: '绑定 <句柄>', desc: '绑定星际争霸2游戏句柄', cmd: '绑定', input: '请输入游戏句柄(格式: 区域-S2-服务器-档案, 如 5-S2-1-1234567)' },
+        { key: 'list', label: '句柄', desc: '查询已绑定的游戏句柄', cmd: '句柄' },
+        { key: 'switch', label: '切换', desc: '切换正在使用的游戏句柄', cmd: '切换' },
+        { key: 'check', label: '查询', desc: '查询某句柄是否已被绑定', cmd: '查询' },
+        { key: 'unbind', label: '解绑', desc: '解除绑定某个游戏句柄', cmd: '解绑' },
+        { key: 'migrate', label: '迁移 <QQ>', desc: '将指定QQ号绑定的句柄迁移到当前账号', cmd: '迁移', input: '请输入要迁移的QQ号' },
+      ],
+    },
+    {
+      key: 'query', label: '📊 查询信息', desc: '地图检测 / 封禁记录 / 签到奖励',
+      items: [
+        { key: 'map', label: '地图检测', desc: '查询已配置地图的检测状态', cmd: '地图检测' },
+        { key: 'ban', label: '封禁记录', desc: '查询句柄的封禁记录', cmd: '封禁记录' },
+        { key: 'reward', label: '签到奖励', desc: '查看签到奖励规则说明', cmd: '签到奖励' },
+      ],
+    },
+  ]
+
+  // 生成菜单纯文本 (非 QQ 平台或 QQ Markdown 发送失败时的回退)
+  const buildPlainMenu = (category?: MenuCategory) => {
+    if (category) {
+      return [`🐤 咕咕之战 · ${category.label}`, ...category.items.map(i => `${i.label}：${i.desc}`)].join('\n')
+    }
+    return [
+      '🐤 咕咕之战菜单',
+      ...menuCategories.map(c => `${c.label}\n  ${c.items.map(i => i.label).join(' / ')}`),
+      '',
+      '提示: 当前平台不支持按钮菜单, 请直接输入对应指令使用。',
+    ].join('\n\n')
+  }
+
+  // 发送菜单: QQ 平台发送 Markdown + 按钮, 其它平台回退纯文本
+  const sendMenu = async (session: any, category?: MenuCategory) => {
+    if (session.platform !== 'qq') {
+      await session.send(buildPlainMenu(category))
+      return
+    }
+
+    let title: string
+    let lines: string[]
+    let rows: { id: string; label: string; primary?: boolean; input?: string }[][]
+
+    if (category) {
+      title = `🐤 咕咕之战 · ${category.label}`
+      lines = [
+        ...category.items.map((item, idx) => `${idx + 1}. **${item.label}**：${item.desc}`),
+        '',
+        '点击下方按钮即可使用对应功能, 点「⬅️ 返回」回到主菜单。',
+      ]
+      rows = [
+        category.items.map(item => ({
+          id: `${MENU_PREFIX}run:${category.key}:${item.key}`,
+          label: item.label,
+          input: item.input,
+          primary: item.key === 'sign',
+        })),
+        [{ id: `${MENU_PREFIX}back`, label: '⬅️ 返回' }],
+      ]
+    } else {
+      title = '🐤 咕咕之战菜单'
+      lines = [
+        ...menuCategories.map((cat, idx) => `${idx + 1}. ${cat.label}：${cat.desc}`),
+        '',
+        '点击下方分类按钮进入对应功能菜单。',
+      ]
+      rows = [
+        [
+          { id: `${MENU_PREFIX}cat:daily`, label: '📅 每日玩法', primary: true },
+          { id: `${MENU_PREFIX}cat:bag`, label: '🎒 物品背包' },
+        ],
+        [
+          { id: `${MENU_PREFIX}cat:lottery`, label: '🎲 抽奖兑换' },
+          { id: `${MENU_PREFIX}cat:activity`, label: '🎉 活动' },
+        ],
+        [
+          { id: `${MENU_PREFIX}cat:handle`, label: '🔗 句柄绑定' },
+          { id: `${MENU_PREFIX}cat:query`, label: '📊 查询信息' },
+        ],
+      ]
+    }
+
+    const elements = [
+      h('qq:markdown', `**${title}**\n\n${lines.join('\n')}`),
+      ...rows.map(row => h('button-group', row.map(btn => h('button', {
+        id: btn.id,
+        class: btn.primary ? 'primary' : undefined,
+        type: btn.input ? 'input' : undefined,
+        text: btn.input,
+      }, btn.label)))),
+    ]
+
+    try {
+      await session.send(elements)
+    } catch (e) {
+      // QQ Markdown/按钮发送失败时回退为纯文本
+      ctx.logger('ggcevo').warn('咕咕之战菜单 Markdown 发送失败, 回退为纯文本: %o', e)
+      await session.send(buildPlainMenu(category))
+    }
+  }
+
+  // 点击按钮执行指令 (按钮回调会话没有 messageId, 置空避免指令内 <quote id="${session.messageId}"/>
+  // 生成 id=undefined 的无效引用; 置空后交互会话回复走 event_id 被动消息通道)
+  const runMenuCommand = async (session: any, name: string, args: string[] = []) => {
+    session.messageId = ''
+    await session.execute({ name, args, options: {} })
+  }
+
+  ctx.command('咕咕之战')
+    .alias('菜单')
+    .usage('生成咕咕之战内容分类菜单(QQ 官方机器人支持按钮点击使用)')
+    .action(async (argv) => {
+      await sendMenu(argv.session, undefined)
+    })
+
+  // QQ 官方机器人按钮回调
+  ctx.on('interaction/button', async (session: any) => {
+    const button = session.event?.button
+    if (!button || typeof button.id !== 'string' || !button.id.startsWith(MENU_PREFIX)) return
+    const parts = button.id.split(':')
+
+    try {
+      if (parts[1] === 'back') {
+        // 返回主菜单
+        await sendMenu(session, undefined)
+      } else if (parts[1] === 'cat') {
+        // 进入分类子菜单
+        const category = menuCategories.find(c => c.key === parts[2])
+        if (category) await sendMenu(session, category)
+      } else if (parts[1] === 'run') {
+        const category = menuCategories.find(c => c.key === parts[2])
+        const item = category?.items.find(i => i.key === parts[3])
+        if (!category || !item || !item.cmd) return
+        if (item.input) {
+          const value = String(button.data ?? '').trim()
+          if (!value) {
+            await session.send(`请输入${item.label}后重试。`)
+            return
+          }
+          await runMenuCommand(session, item.cmd, [value])
+        } else {
+          await runMenuCommand(session, item.cmd)
+        }
+      }
+    } catch (e) {
+      ctx.logger('ggcevo').warn('咕咕之战按钮回调处理失败: %o', e)
+      await session.send('⚠️ 操作失败, 请重试或直接输入指令使用。').catch(() => { })
+    }
+  })
 }
 
 // ========== 工具函数 ==========
