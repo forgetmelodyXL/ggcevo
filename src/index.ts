@@ -1407,7 +1407,7 @@ export function apply(ctx: Context, config: Config) {
   // ========== 指令菜单 (puppeteer 渲染图片) ==========
 
   // 用 puppeteer 将 HTML 渲染为图片返回; 未安装 puppeteer 时降级为文本提示
-  const renderMenuImage = async (html: string) => {
+  const renderMenuImage = async (html: string, session?: any) => {
     const logger = ctx.logger('ggcevo');
     if (!ctx.puppeteer) {
       logger.warn('[menu-render] 未安装 puppeteer 服务, 降级为文本提示');
@@ -1427,6 +1427,21 @@ export function apply(ctx: Context, config: Config) {
       const dataUrl = `data:image/png;base64,${img.toString('base64')}`;
       const sizeKB = (img.length / 1024).toFixed(1);
       logger.info('[menu-render] 截图完成(PNG), 体积 %s KB, 生成 data URL 长度 %d', sizeKB, dataUrl.length);
+      // 诊断: QQ 官方机器人手动调用上传接口, 绕过适配器吞错, 暴露 QQ 真实返回的错误码
+      if (session?.bot?.http && session.platform === 'qq') {
+        try {
+          const uploadPath = session.isDirect
+            ? `/v2/users/${session.userId}/files`
+            : `/v2/groups/${session.channelId}/files`;
+          const uploadRes = await session.bot.http.post(uploadPath, {
+            file_type: 1,
+            file_data: img.toString('base64'),
+          });
+          logger.info('[menu-render] QQ 上传探测成功: %o', uploadRes);
+        } catch (e: any) {
+          logger.warn('[menu-render] QQ 上传探测失败: %s | 响应: %o', e?.message, e?.response?.data);
+        }
+      }
       return h.image(dataUrl);
     } catch (e) {
       logger.warn('[menu-render] 渲染菜单图片失败: %o', e);
@@ -1548,7 +1563,7 @@ export function apply(ctx: Context, config: Config) {
     .action(async (argv) => {
       const session = argv.session;
       const html = buildMenuHtml('咕咕之战', '游戏玩法指令（受宵禁影响的玩法见对应指令说明）', gameMenuGroups);
-      const result = await renderMenuImage(html);
+      const result = await renderMenuImage(html, session);
       return typeof result === 'string'
         ? result
         : h('quote', { id: session.messageId }, result);
@@ -1559,7 +1574,7 @@ export function apply(ctx: Context, config: Config) {
     .action(async (argv) => {
       const session = argv.session;
       const html = buildMenuHtml('GGCEVO', '句柄管理与查询指令', handleMenuGroups);
-      const result = await renderMenuImage(html);
+      const result = await renderMenuImage(html, session);
       return typeof result === 'string'
         ? result
         : h('quote', { id: session.messageId }, result);
