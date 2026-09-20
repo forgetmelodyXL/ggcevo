@@ -3461,7 +3461,6 @@ export function apply(ctx: Context, config: Config) {
       await page.setContent(html)
       await page.waitForNetworkIdle()
       const img = await page.screenshot({ type: 'jpeg', quality: 85, fullPage: true, encoding: 'binary' })
-      logger.info('[menu-render] 菜单图渲染完成, 体积 %s KB', (img.length / 1024).toFixed(1))
       // 2. 写入缓存并清理旧缓存
       try {
         await mkdir(menuCacheDir, { recursive: true })
@@ -3480,7 +3479,7 @@ export function apply(ctx: Context, config: Config) {
     }
   }
 
-  // 将菜单图发送到目标会话: QQ 官方机器人走手动上传+发送并记录 QQ 真实响应(绕过适配器静默吞错), 其余平台直接发图(与 preview-help 一致, 不带引用)
+  // 将菜单图发送到目标会话: QQ 官方机器人手动走官方富媒体上传+发送(适配器会静默吞掉QQ接口错误), 其余平台直接发图(与 preview-help 一致, 不带引用)
   const sendMenuImage = async (session: Session, dataUrl: string): Promise<string | h> => {
     const logger = ctx.logger('ggcevo')
     if (!dataUrl.startsWith('data:image')) return dataUrl // 渲染失败的错误提示文本
@@ -3495,18 +3494,16 @@ export function apply(ctx: Context, config: Config) {
       session['seq'] = msgSeq
       if (session.isDirect) {
         const fileRes = await bot.internal.sendFilePrivate(session.userId, { file_type: 1, srv_send_msg: false, file_data: fileData })
-        logger.info('[menu-render] QQ 官方图片上传响应: %o', fileRes)
         await bot.internal.sendPrivateMessage(session.channelId, {
           msg_type: 7, media: fileRes, content: '', msg_id: session.messageId, msg_seq: msgSeq,
         })
       } else {
         const fileRes = await bot.internal.sendFileGuild(session.channelId, { file_type: 1, srv_send_msg: false, file_data: fileData })
-        logger.info('[menu-render] QQ 官方图片上传响应: %o', fileRes)
         const msgRes = await bot.internal.sendMessage(session.channelId, {
           msg_type: 7, media: fileRes, content: '', msg_id: session.messageId, msg_seq: msgSeq,
         })
-        logger.info('[menu-render] QQ 官方消息发送响应: %o', msgRes)
-        if (msgRes?.audit_id) logger.warn('[menu-render] QQ 消息进入审核(audit_id=%s), 需开启 MESSAGE_AUDIT intent 才能确认最终是否发出', msgRes.audit_id)
+        // 仅警告异常情况: 消息进入审核且未开启 MESSAGE_AUDIT intent 时可能不显示
+        if (msgRes?.audit_id) logger.warn('[menu-render] QQ 菜单图消息进入审核(audit_id=%s), 若未开启 MESSAGE_AUDIT intent 消息可能不显示', msgRes.audit_id)
       }
       return
     } catch (e) {
