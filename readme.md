@@ -174,6 +174,10 @@ npm install koishi-plugin-ggcevo
 
 ## 更新日志
 
+### v1.1.15
+
+- **新增调试模式**：新增配置项 `debugEnabled`（默认关闭）。启用后，ggcevo 所有指令的触发（命令名、用户、平台、参数、选项）与出错（命令名、用户、错误信息）信息会输出到 Koishi 日志，便于排查问题
+
 ### v1.1.14
 
 - **支持 assets 服务发送菜单图**：`咕咕之战`/`菜单` 渲染后若存在 `assets` 服务（如 `koishi-plugin-assets-qqbot-part-file`，通过 QQ 官方 `upload_prepare` 分片上传获取公网 URL），则优先转公网 URL 发送，避免 QQ 官方机器人直接发 Buffer 时受素材上传限制；未配置或上传失败时自动回退为直接发送。仅在启用该 assets 插件时生效，其他环境行为不变

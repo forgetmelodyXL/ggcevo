@@ -25,6 +25,7 @@ export interface Config {
   handleInactiveUnbindDays: number
   /** 活动兑换管理员名字, 填写后兑换成功及兑换列表会提示向该管理员登记; 不填则不提醒 */
   exchangeAdminName: string
+  debugEnabled: boolean
 }
 
 export const Config: Schema<Config> = Schema.intersect([
@@ -61,6 +62,10 @@ export const Config: Schema<Config> = Schema.intersect([
     handleInactiveUnbindEnabled: Schema.boolean().description('是否启用句柄长时间未使用自动解绑').default(false),
     handleInactiveUnbindDays: Schema.number().description('句柄超过该天数未使用将自动解绑(仅对非当前使用的句柄生效)').default(90).min(1),
   }).description('句柄自动解绑'),
+
+  Schema.object({
+    debugEnabled: Schema.boolean().description('是否启用调试模式(启用后, ggcevo 所有指令的触发/参数/执行结果/错误信息会输出到 Koishi 日志)').default(false),
+  }).description('调试模式'),
 ])
 
 export const inject = {
@@ -317,6 +322,34 @@ export interface ActivityClaimLog {
 }
 
 export function apply(ctx: Context, config: Config) {
+  // ========== 调试模式 ==========
+
+  // 调试日志辅助: 仅配置启用 debugEnabled 时输出到 Koishi 日志
+  const debug = (...args: unknown[]) => {
+    if (config.debugEnabled) {
+      ctx.logger.info('[ggcevo:debug]', ...args);
+    }
+  };
+
+  // 仅统计 ggcevo 命名空间下的指令, 避免干扰其他插件的日志
+  const isGgcEvoCommand = (name: string) => name === 'ggcevo' || name.startsWith('ggcevo/');
+
+  if (config.debugEnabled) {
+    // 指令触发时(含参数与选项)
+    ctx.on('command/before-execute', (argv) => {
+      const { command, session, args, options } = argv;
+      if (!isGgcEvoCommand(command.name)) return;
+      const optionStr = Object.keys(options).length ? ` | 选项: ${JSON.stringify(options)}` : '';
+      debug(`指令触发: ${command.name} | 用户: ${session.userId} | 平台: ${session.platform} | 参数: ${JSON.stringify(args)}${optionStr}`);
+    });
+
+    // 指令执行出错时
+    ctx.on('command-error', (argv, error) => {
+      const { command, session } = argv;
+      if (!isGgcEvoCommand(command.name)) return;
+      debug(`指令出错: ${command.name} | 用户: ${session.userId} | 错误: ${error?.message ?? error}`);
+    });
+  }
   // ========== 数据库模型扩展 (sc2arcade 部分, 前缀改为 ggcevo_) ==========
 
   ctx.model.extend('sc2arcade_player', {
