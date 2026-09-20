@@ -1408,22 +1408,32 @@ export function apply(ctx: Context, config: Config) {
 
   // 用 puppeteer 将 HTML 渲染为图片返回; 未安装 puppeteer 时降级为文本提示
   const renderMenuImage = async (html: string) => {
+    const logger = ctx.logger('ggcevo');
     if (!ctx.puppeteer) {
+      logger.warn('[menu-render] 未安装 puppeteer 服务, 降级为文本提示');
       return '⚠️ 未安装 puppeteer 服务，无法渲染菜单图片。请安装 `koishi-plugin-puppeteer` 或 `@shangxueink/puppeteer-without-canvas` 并启用其一。';
     }
     const page = await ctx.puppeteer.page();
     try {
-      // deviceScaleFactor=4 使渲染输出约 2560x3200 高清图, 配合背景细纹理破坏 JPEG 压缩,
+      // deviceScaleFactor=4 使渲染输出约 2560x3200 高清图, 配合背景细纹理与 PNG 无损编码,
       // 确保图片体积超过 3MB(uploadThreshold 默认值), 强制 QQ 官方适配器走分片上传(upload_prepare)通道
       await page.setViewport({ width: 640, height: 800, deviceScaleFactor: 4 });
+      logger.info('[menu-render] 页面已创建, 正在写入 HTML...');
       await page.setContent(html, { waitUntil: 'networkidle0' });
-      const img = await page.screenshot({ type: 'jpeg', quality: 92, fullPage: true });
+      logger.info('[menu-render] HTML 写入完成, 正在截图(PNG)...');
+      const img = await page.screenshot({ type: 'png', fullPage: true });
       // 以 base64 data URL 发送(与 preview-help 插件一致):
       // QQ 官方适配器会从 data URL 直接提取 base64 上传, 兼容性最佳, 无需额外素材上传服务
-      const dataUrl = `data:image/jpeg;base64,${img.toString('base64')}`;
+      const dataUrl = `data:image/png;base64,${img.toString('base64')}`;
+      const sizeKB = (img.length / 1024).toFixed(1);
+      logger.info('[menu-render] 截图完成(PNG), 体积 %s KB, 生成 data URL 长度 %d', sizeKB, dataUrl.length);
       return h.image(dataUrl);
+    } catch (e) {
+      logger.warn('[menu-render] 渲染菜单图片失败: %o', e);
+      return '⚠️ 菜单图片渲染失败，请查看日志。';
     } finally {
       await page.close();
+      logger.info('[menu-render] 页面已关闭');
     }
   };
 
