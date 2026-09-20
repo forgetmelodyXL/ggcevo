@@ -1,6 +1,5 @@
 import { Context, Schema, h } from 'koishi'
 import type {} from 'koishi-plugin-puppeteer'
-import type {} from '@koishijs/assets'
 
 export const name = 'ggcevo'
 
@@ -70,7 +69,7 @@ export const Config: Schema<Config> = Schema.intersect([
 
 export const inject = {
   required: ['database'],
-  optional: ['puppeteer', 'assets'],
+  optional: ['puppeteer'],
 }
 
 export const ItemConfig: Record<number, string> = {
@@ -334,21 +333,25 @@ export function apply(ctx: Context, config: Config) {
   // 仅统计 ggcevo 命名空间下的指令, 避免干扰其他插件的日志
   const isGgcEvoCommand = (name: string) => name === 'ggcevo' || name.startsWith('ggcevo/');
 
-  if (config.debugEnabled) {
-    // 指令触发时(含参数与选项)
-    ctx.on('command/before-execute', (argv) => {
-      const { command, session, args, options } = argv;
-      if (!isGgcEvoCommand(command.name)) return;
-      const optionStr = Object.keys(options).length ? ` | 选项: ${JSON.stringify(options)}` : '';
-      debug(`指令触发: ${command.name} | 用户: ${session.userId} | 平台: ${session.platform} | 参数: ${JSON.stringify(args)}${optionStr}`);
-    });
+  // 监听器始终注册(避免控制台修改配置后未重载插件导致监听器未注册), 输出与否由 debug() 内部开关控制
+  ctx.on('command/before-execute', (argv) => {
+    if (!config.debugEnabled) return;
+    const { command, session, args, options } = argv;
+    if (!isGgcEvoCommand(command.name)) return;
+    const optionStr = Object.keys(options).length ? ` | 选项: ${JSON.stringify(options)}` : '';
+    debug(`指令触发: ${command.name} | 用户: ${session.userId} | 平台: ${session.platform} | 参数: ${JSON.stringify(args)}${optionStr}`);
+  });
 
-    // 指令执行出错时
-    ctx.on('command-error', (argv, error) => {
-      const { command, session } = argv;
-      if (!isGgcEvoCommand(command.name)) return;
-      debug(`指令出错: ${command.name} | 用户: ${session.userId} | 错误: ${error?.message ?? error}`);
-    });
+  ctx.on('command-error', (argv, error) => {
+    if (!config.debugEnabled) return;
+    const { command, session } = argv;
+    if (!isGgcEvoCommand(command.name)) return;
+    debug(`指令出错: ${command.name} | 用户: ${session.userId} | 错误: ${error?.message ?? error}`);
+  });
+
+  // 启动探针: 便于确认调试模式是否生效
+  if (config.debugEnabled) {
+    debug('调试模式已启用(ggcevo 指令触发/错误日志将输出到 Koishi 日志)');
   }
   // ========== 数据库模型扩展 (sc2arcade 部分, 前缀改为 ggcevo_) ==========
 
@@ -1401,38 +1404,34 @@ export function apply(ctx: Context, config: Config) {
       await page.setContent(html, { waitUntil: 'networkidle0' });
       // JPEG 压缩输出，显著减小体积以兼容 QQ 官方机器人素材限制
       const img = await page.screenshot({ type: 'jpeg', quality: 85, fullPage: true });
-      // 若配置了 assets 服务（如 koishi-plugin-assets-qqbot-part-file 分片上传），优先转公网 URL 发送，
-      // 避免 QQ 官方机器人直接发 Buffer 时受素材上传限制；失败或无 assets 时回退为直接发送
-      if (ctx.assets) {
-        try {
-          const dataUrl = `data:image/jpeg;base64,${img.toString('base64')}`;
-          const transformed = await ctx.assets.transform(String(h.image(dataUrl, { file: 'ggcevo-menu.jpg' })));
-          const url = h.parse(transformed)[0]?.attrs.src;
-          if (typeof url === 'string' && url) {
-            return h.image(url);
-          }
-        } catch (e) {
-          ctx.logger.warn(`菜单图 assets 上传失败，回退为直接发送: ${e}`);
-        }
-      }
-      return h.image(img, 'image/jpeg');
+      // 以 base64 data URL 发送(与 preview-help 插件一致):
+      // QQ 官方适配器会从 data URL 直接提取 base64 上传, 兼容性最佳, 无需额外素材上传服务
+      const dataUrl = `data:image/jpeg;base64,${img.toString('base64')}`;
+      return h.image(dataUrl);
     } finally {
       await page.close();
     }
   };
 
-  const buildMenuHtml = (title: string, subtitle: string, items: { icon: string; name: string; desc: string }[]): string => {
+  const buildMenuHtml = (title: string, subtitle: string, groups: { title: string; items: { icon: string; name: string; desc: string }[] }[]): string => {
     // 彩色徽章色板，按顺序循环分配，避免依赖系统 emoji 字体
     const palette = ['#4a7dff', '#9b59b6', '#e67e22', '#27ae60', '#e74c3c', '#16a085', '#f39c12', '#8e44ad', '#2980b9', '#d35400', '#2ecc71', '#c0392b'];
-    const itemRows = items.map((item, i) => {
-      const color = palette[i % palette.length];
+    const groupHtml = groups.map((group) => {
+      const itemRows = group.items.map((item, i) => {
+        const color = palette[i % palette.length];
+        return `
+        <div class="item">
+          <div class="icon" style="background: ${color}">${item.icon}</div>
+          <div class="info">
+            <div class="name">${item.name}</div>
+            <div class="desc">${item.desc}</div>
+          </div>
+        </div>`;
+      }).join('');
       return `
-      <div class="item">
-        <div class="icon" style="background: ${color}">${item.icon}</div>
-        <div class="info">
-          <div class="name">${item.name}</div>
-          <div class="desc">${item.desc}</div>
-        </div>
+      <div class="group">
+        <div class="group-title">${group.title}</div>
+        <div class="list">${itemRows}</div>
       </div>`;
     }).join('');
     return `<!DOCTYPE html>
@@ -1444,13 +1443,15 @@ export function apply(ctx: Context, config: Config) {
   .header { text-align: center; padding-bottom: 18px; border-bottom: 2px solid rgba(120,160,255,0.35); }
   .title { font-size: 32px; font-weight: bold; letter-spacing: 6px; color: #8fc0ff; text-shadow: 0 0 18px rgba(90,140,255,0.45); }
   .subtitle { margin-top: 8px; font-size: 14px; color: #93a6c8; }
-  .list { margin-top: 20px; display: flex; flex-direction: column; gap: 12px; }
+  .group { margin-top: 22px; }
+  .group-title { font-size: 15px; font-weight: bold; color: #ffd98a; letter-spacing: 3px; margin-bottom: 10px; padding-left: 10px; border-left: 3px solid #ffd98a; }
+  .list { display: flex; flex-direction: column; gap: 12px; }
   .item { display: flex; align-items: center; gap: 14px; background: rgba(255,255,255,0.07); border: 1px solid rgba(140,170,255,0.22); border-radius: 12px; padding: 12px 16px; }
   .icon { width: 40px; height: 40px; border-radius: 10px; display: flex; align-items: center; justify-content: center; font-size: 19px; font-weight: bold; color: #fff; flex-shrink: 0; }
   .info { flex: 1; }
   .name { font-size: 20px; font-weight: bold; color: #ffffff; }
   .desc { margin-top: 4px; font-size: 13px; color: #9db1d8; line-height: 1.5; }
-  .footer { margin-top: 20px; text-align: center; font-size: 12px; color: #6b7ea6; }
+  .footer { margin-top: 24px; text-align: center; font-size: 12px; color: #6b7ea6; }
 </style>
 </head>
 <body>
@@ -1458,43 +1459,68 @@ export function apply(ctx: Context, config: Config) {
     <div class="title">${title}</div>
     <div class="subtitle">${subtitle}</div>
   </div>
-  <div class="list">${itemRows}</div>
+  ${groupHtml}
   <div class="footer">输入上方指令名即可使用对应功能</div>
 </body>
 </html>`;
   };
 
-  // 咕咕之战玩法指令菜单 (普通用户可用的玩法指令)
-  const gameMenuItems = [
-    { icon: '签', name: '签到', desc: '每日签到，获取签到券/补签券等奖励，每月首次签到可领津贴' },
-    { icon: '抽', name: '抽奖', desc: '使用金币/咕咕币/兑换券参与抽奖，选项：-p 奖池ID -c 次数' },
-    { icon: '换', name: '兑换', desc: '使用兑换券兑换皮肤/宠物/入场特效/角色冠名权等物品' },
-    { icon: '包', name: '背包', desc: '查看自己背包中的物品' },
-    { icon: '信', name: '个人信息', desc: '查看自己的签到统计与个人信息' },
-    { icon: '兑', name: '兑换列表', desc: '查看可兑换物品列表及兑换券消耗' },
-    { icon: '活', name: '活动列表', desc: '查看进行中/未开始的活动' },
-    { icon: '领', name: '领取活动', desc: '领取指定(或最新)活动奖励' },
-    { icon: '补', name: '补签', desc: '使用补签券补签漏签的日期' },
-    { icon: '用', name: '使用', desc: '使用指定物品(如赎罪券等)' },
-    { icon: '挖', name: '挖矿', desc: '挂机挖矿，每半小时收益4金币，上限24小时，领取后自动进入下一轮' },
-    { icon: '探', name: '探索', desc: '选择星系进行12小时探索，探索结束领取金币/道具收益' },
+  // 咕咕之战玩法指令菜单 (普通用户可用的玩法指令, 按功能二次分类)
+  const gameMenuGroups = [
+    {
+      title: '每日玩法',
+      items: [
+        { icon: '签', name: '签到', desc: '每日签到，获取签到券/补签券等奖励，每月首次签到可领津贴' },
+        { icon: '补', name: '补签', desc: '使用补签券补签漏签的日期' },
+        { icon: '抽', name: '抽奖', desc: '使用金币/咕咕币/兑换券参与抽奖，选项：-p 奖池ID -c 次数' },
+        { icon: '挖', name: '挖矿', desc: '挂机挖矿，每半小时收益4金币，上限24小时，领取后自动进入下一轮' },
+        { icon: '探', name: '探索', desc: '选择星系进行12小时探索，探索结束领取金币/道具收益' },
+      ],
+    },
+    {
+      title: '物品与背包',
+      items: [
+        { icon: '兑', name: '兑换列表', desc: '查看可兑换物品列表及兑换券消耗' },
+        { icon: '换', name: '兑换', desc: '使用兑换券兑换皮肤/宠物/入场特效/角色冠名权等物品' },
+        { icon: '包', name: '背包', desc: '查看自己背包中的物品' },
+        { icon: '用', name: '使用', desc: '使用指定物品(如赎罪券等)' },
+        { icon: '信', name: '个人信息', desc: '查看自己的签到统计与个人信息' },
+      ],
+    },
+    {
+      title: '活动',
+      items: [
+        { icon: '活', name: '活动列表', desc: '查看进行中/未开始的活动' },
+        { icon: '领', name: '领取活动', desc: '领取指定(或最新)活动奖励' },
+      ],
+    },
   ];
 
-  // GGCEVO 句柄管理指令菜单 (普通用户可用的句柄/查询指令)
-  const handleMenuItems = [
-    { icon: '绑', name: '绑定句柄', desc: '绑定星际争霸2游戏句柄，格式：[区域ID]-S2-[服务器ID]-[档案ID]' },
-    { icon: '句', name: '句柄', desc: '查询自己(或他人)已绑定的游戏句柄' },
-    { icon: '切', name: '切换', desc: '切换正在使用的游戏句柄' },
-    { icon: '查', name: '查询', desc: '查询某游戏句柄是否已被绑定' },
-    { icon: '解', name: '解绑句柄', desc: '解除绑定某个游戏句柄' },
-    { icon: '图', name: '地图检测', desc: '查询已配置地图的在线状态与离线统计' },
-    { icon: '封', name: '封禁记录', desc: '查询自己(或他人)的封禁记录，支持翻页' },
+  // GGCEVO 句柄管理指令菜单 (普通用户可用的句柄/查询指令, 按功能二次分类)
+  const handleMenuGroups = [
+    {
+      title: '句柄管理',
+      items: [
+        { icon: '绑', name: '绑定句柄', desc: '绑定星际争霸2游戏句柄，格式：[区域ID]-S2-[服务器ID]-[档案ID]' },
+        { icon: '切', name: '切换', desc: '切换正在使用的游戏句柄' },
+        { icon: '解', name: '解绑句柄', desc: '解除绑定某个游戏句柄' },
+      ],
+    },
+    {
+      title: '查询与检测',
+      items: [
+        { icon: '句', name: '句柄', desc: '查询自己(或他人)已绑定的游戏句柄' },
+        { icon: '查', name: '查询', desc: '查询某游戏句柄是否已被绑定' },
+        { icon: '图', name: '地图检测', desc: '查询已配置地图的在线状态与离线统计' },
+        { icon: '封', name: '封禁记录', desc: '查询自己(或他人)的封禁记录，支持翻页' },
+      ],
+    },
   ];
 
   ctx.command('ggcevo/咕咕之战', '查看咕咕之战玩法指令菜单')
     .action(async (argv) => {
       const session = argv.session;
-      const html = buildMenuHtml('咕咕之战', '游戏玩法指令（受宵禁影响的玩法见对应指令说明）', gameMenuItems);
+      const html = buildMenuHtml('咕咕之战', '游戏玩法指令（受宵禁影响的玩法见对应指令说明）', gameMenuGroups);
       const result = await renderMenuImage(html);
       return typeof result === 'string'
         ? result
@@ -1505,7 +1531,7 @@ export function apply(ctx: Context, config: Config) {
     .alias('ggcevo指令')
     .action(async (argv) => {
       const session = argv.session;
-      const html = buildMenuHtml('GGCEVO', '句柄管理与查询指令', handleMenuItems);
+      const html = buildMenuHtml('GGCEVO', '句柄管理与查询指令', handleMenuGroups);
       const result = await renderMenuImage(html);
       return typeof result === 'string'
         ? result

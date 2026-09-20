@@ -174,6 +174,12 @@ npm install koishi-plugin-ggcevo
 
 ## 更新日志
 
+### v1.1.16
+
+- **菜单图发送改为 base64 data URL**：`咕咕之战`/`菜单` 渲染结果改为 base64 data URL 发送（与 preview-help 插件同方案）。QQ 官方适配器可从 data URL 直接提取 base64 上传，兼容性最佳，无需额外素材上传服务
+- **移除 assets 前置依赖**：删除对 `koishi-plugin-assets-qqbot-part-file` 的可选依赖与服务声明，菜单图不再依赖任何 assets 服务
+- **菜单按功能二次分类**：`咕咕之战` 菜单分为「每日玩法」「物品与背包」「活动」三组；`菜单` 分为「句柄管理」「查询与检测」两组，便于查找
+
 ### v1.1.15
 
 - **新增调试模式**：新增配置项 `debugEnabled`（默认关闭）。启用后，ggcevo 所有指令的触发（命令名、用户、平台、参数、选项）与出错（命令名、用户、错误信息）信息会输出到 Koishi 日志，便于排查问题

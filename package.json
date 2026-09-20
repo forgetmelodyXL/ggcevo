@@ -1,7 +1,7 @@
 {
   "name": "koishi-plugin-ggcevo",
   "description": "GGCEVO 综合插件：星际争霸2游戏句柄绑定 + 签到/抽奖/兑换/背包/活动系统等虚拟物品玩法",
-  "version": "1.1.15",
+  "version": "1.1.16",
   "main": "lib/index.js",
   "typings": "lib/index.d.ts",
   "files": [
@@ -26,25 +26,20 @@
         "database"
       ],
       "optional": [
-        "puppeteer",
-        "assets"
+        "puppeteer"
       ]
     }
   },
   "peerDependencies": {
     "koishi": "^4.18.7",
     "koishi-plugin-puppeteer": "^3.9.0",
-    "@shangxueink/puppeteer-without-canvas": "^3.0.7",
-    "koishi-plugin-assets-qqbot-part-file": "^0.1.2"
+    "@shangxueink/puppeteer-without-canvas": "^3.0.7"
   },
   "peerDependenciesMeta": {
     "koishi-plugin-puppeteer": {
       "optional": true
     },
     "@shangxueink/puppeteer-without-canvas": {
-      "optional": true
-    },
-    "koishi-plugin-assets-qqbot-part-file": {
       "optional": true
     }
   }
