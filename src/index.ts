@@ -1359,7 +1359,7 @@ export function apply(ctx: Context, config: Config) {
   // 用 puppeteer 将 HTML 渲染为图片返回; 未安装 puppeteer 时降级为文本提示
   const renderMenuImage = async (html: string) => {
     if (!ctx.puppeteer) {
-      return '⚠️ 未安装 koishi-plugin-puppeteer，无法渲染菜单图片，请先安装启用该插件。';
+      return '⚠️ 未安装 puppeteer 服务，无法渲染菜单图片。请安装 `koishi-plugin-puppeteer` 或 `@shangxueink/puppeteer-without-canvas` 并启用其一。';
     }
     const page = await ctx.puppeteer.page();
     try {
