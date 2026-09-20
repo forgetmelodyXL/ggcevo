@@ -179,6 +179,13 @@ npm install koishi-plugin-ggcevo
 
 ## 更新日志
 
+### v1.3.2
+
+图片菜单渲染对齐 preview-help 方案，新增磁盘缓存。
+
+- **新增图片菜单磁盘缓存**：`咕咕之战` 图片菜单按 HTML 内容 hash 缓存到 `data/ggcevo/menu/`，命中缓存直接读回图片（免去重复渲染、无需 puppeteer 也可返回缓存图），渲染成功后会清理旧缓存文件
+- **渲染参数对齐 preview-help**：viewport 由 900×DPR2 调整为 1280×DPR1，`setContent` 后改用 `waitForNetworkIdle()` 等待页面网络空闲
+
 ### v1.3.1
 
 取消 Markdown 按钮菜单，改为可配置的文字/图片菜单。

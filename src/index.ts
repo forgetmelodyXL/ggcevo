@@ -1,5 +1,9 @@
 import { Context, Schema, h } from 'koishi'
 import type {} from 'koishi-plugin-puppeteer'
+import fs from 'node:fs'
+import path from 'node:path'
+import { createHash } from 'node:crypto'
+import { mkdir, readFile, readdir, unlink, writeFile } from 'node:fs/promises'
 
 export const name = 'ggcevo'
 
@@ -3434,19 +3438,39 @@ export function apply(ctx: Context, config: Config) {
 </html>`
   }
 
+  // 图片菜单磁盘缓存目录 (按 HTML 内容 hash, 命中缓存免去重复渲染, 与 preview-help 同方案)
+  const menuCacheDir = path.resolve(ctx.baseDir, 'data/ggcevo/menu')
+
   // 用 puppeteer 将 HTML 渲染为图片返回; 未启用 puppeteer 或渲染失败时返回错误提示文本
   const renderMenuImage = async (html: string): Promise<string | h> => {
     const logger = ctx.logger('ggcevo')
+    // 1. 按 HTML 内容 hash 计算缓存文件名, 命中则直接读回 base64, 无需 puppeteer
+    const hash = createHash('sha256').update(html).digest('hex')
+    const cachePath = path.resolve(menuCacheDir, `${hash}.jpg`)
+    if (fs.existsSync(cachePath)) {
+      const cached = await readFile(cachePath)
+      return h.image(`data:image/jpeg;base64,${cached.toString('base64')}`)
+    }
     if (!ctx.puppeteer) {
       logger.warn('[menu-render] 未启用 puppeteer 服务')
       return '⚠️ 未启用 puppeteer 服务，无法渲染图片菜单。请安装并启用 `koishi-plugin-puppeteer` 或 `@shangxueink/puppeteer-without-canvas`。'
     }
     const page = await ctx.puppeteer.page()
     try {
-      await page.setViewport({ width: 900, height: 100, deviceScaleFactor: 2 })
-      await page.setContent(html, { waitUntil: 'networkidle0' })
+      await page.setViewport({ width: 1280, height: 100, deviceScaleFactor: 1 })
+      await page.setContent(html)
+      await page.waitForNetworkIdle()
       const img = await page.screenshot({ type: 'jpeg', quality: 85, fullPage: true, encoding: 'binary' })
       logger.info('[menu-render] 菜单图渲染完成, 体积 %s KB', (img.length / 1024).toFixed(1))
+      // 2. 写入缓存并清理旧缓存
+      try {
+        await mkdir(menuCacheDir, { recursive: true })
+        const files = await readdir(menuCacheDir)
+        for (const file of files) await unlink(path.resolve(menuCacheDir, file))
+        await writeFile(cachePath, img)
+      } catch (e) {
+        logger.error('[menu-render] 写入菜单图缓存失败: %o', e)
+      }
       // 以 base64 data URL 发送(与 preview-help 插件同方案), QQ 官方适配器可直接提取 base64 上传
       return h.image(`data:image/jpeg;base64,${img.toString('base64')}`)
     } catch (e) {
