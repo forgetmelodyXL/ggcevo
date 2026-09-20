@@ -1374,14 +1374,19 @@ export function apply(ctx: Context, config: Config) {
   };
 
   const buildMenuHtml = (title: string, subtitle: string, items: { icon: string; name: string; desc: string }[]): string => {
-    const itemRows = items.map(item => `
+    // 彩色徽章色板，按顺序循环分配，避免依赖系统 emoji 字体
+    const palette = ['#4a7dff', '#9b59b6', '#e67e22', '#27ae60', '#e74c3c', '#16a085', '#f39c12', '#8e44ad', '#2980b9', '#d35400', '#2ecc71', '#c0392b'];
+    const itemRows = items.map((item, i) => {
+      const color = palette[i % palette.length];
+      return `
       <div class="item">
-        <div class="icon">${item.icon}</div>
+        <div class="icon" style="background: ${color}">${item.icon}</div>
         <div class="info">
           <div class="name">${item.name}</div>
           <div class="desc">${item.desc}</div>
         </div>
-      </div>`).join('');
+      </div>`;
+    }).join('');
     return `<!DOCTYPE html>
 <html lang="zh">
 <head>
@@ -1393,7 +1398,7 @@ export function apply(ctx: Context, config: Config) {
   .subtitle { margin-top: 8px; font-size: 14px; color: #93a6c8; }
   .list { margin-top: 20px; display: flex; flex-direction: column; gap: 12px; }
   .item { display: flex; align-items: center; gap: 14px; background: rgba(255,255,255,0.07); border: 1px solid rgba(140,170,255,0.22); border-radius: 12px; padding: 12px 16px; }
-  .icon { font-size: 26px; width: 40px; text-align: center; }
+  .icon { width: 40px; height: 40px; border-radius: 10px; display: flex; align-items: center; justify-content: center; font-size: 19px; font-weight: bold; color: #fff; flex-shrink: 0; }
   .info { flex: 1; }
   .name { font-size: 20px; font-weight: bold; color: #ffffff; }
   .desc { margin-top: 4px; font-size: 13px; color: #9db1d8; line-height: 1.5; }
@@ -1413,29 +1418,29 @@ export function apply(ctx: Context, config: Config) {
 
   // 咕咕之战玩法指令菜单 (普通用户可用的玩法指令)
   const gameMenuItems = [
-    { icon: '📅', name: '签到', desc: '每日签到，获取签到券/补签券等奖励，每月首次签到可领津贴' },
-    { icon: '🎰', name: '抽奖', desc: '使用金币/咕咕币/兑换券参与抽奖，选项：-p 奖池ID -c 次数' },
-    { icon: '🎁', name: '兑换', desc: '使用兑换券兑换皮肤/宠物/入场特效/角色冠名权等物品' },
-    { icon: '🎒', name: '背包', desc: '查看自己背包中的物品' },
-    { icon: '👤', name: '个人信息', desc: '查看自己的签到统计与个人信息' },
-    { icon: '📜', name: '兑换列表', desc: '查看可兑换物品列表及兑换券消耗' },
-    { icon: '🏆', name: '活动列表', desc: '查看进行中/未开始的活动' },
-    { icon: '🎉', name: '领取活动', desc: '领取指定(或最新)活动奖励' },
-    { icon: '🩹', name: '补签', desc: '使用补签券补签漏签的日期' },
-    { icon: '🔧', name: '使用', desc: '使用指定物品(如赎罪券等)' },
-    { icon: '⛏️', name: '挖矿', desc: '挂机挖矿，每半小时收益4金币，上限24小时，领取后自动进入下一轮' },
-    { icon: '🛸', name: '探索', desc: '选择星系进行12小时探索，探索结束领取金币/道具收益' },
+    { icon: '签', name: '签到', desc: '每日签到，获取签到券/补签券等奖励，每月首次签到可领津贴' },
+    { icon: '抽', name: '抽奖', desc: '使用金币/咕咕币/兑换券参与抽奖，选项：-p 奖池ID -c 次数' },
+    { icon: '换', name: '兑换', desc: '使用兑换券兑换皮肤/宠物/入场特效/角色冠名权等物品' },
+    { icon: '包', name: '背包', desc: '查看自己背包中的物品' },
+    { icon: '信', name: '个人信息', desc: '查看自己的签到统计与个人信息' },
+    { icon: '兑', name: '兑换列表', desc: '查看可兑换物品列表及兑换券消耗' },
+    { icon: '活', name: '活动列表', desc: '查看进行中/未开始的活动' },
+    { icon: '领', name: '领取活动', desc: '领取指定(或最新)活动奖励' },
+    { icon: '补', name: '补签', desc: '使用补签券补签漏签的日期' },
+    { icon: '用', name: '使用', desc: '使用指定物品(如赎罪券等)' },
+    { icon: '挖', name: '挖矿', desc: '挂机挖矿，每半小时收益4金币，上限24小时，领取后自动进入下一轮' },
+    { icon: '探', name: '探索', desc: '选择星系进行12小时探索，探索结束领取金币/道具收益' },
   ];
 
   // GGCEVO 句柄管理指令菜单 (普通用户可用的句柄/查询指令)
   const handleMenuItems = [
-    { icon: '🔗', name: '绑定句柄', desc: '绑定星际争霸2游戏句柄，格式：[区域ID]-S2-[服务器ID]-[档案ID]' },
-    { icon: '🔍', name: '句柄', desc: '查询自己(或他人)已绑定的游戏句柄' },
-    { icon: '🔄', name: '切换', desc: '切换正在使用的游戏句柄' },
-    { icon: '❓', name: '查询', desc: '查询某游戏句柄是否已被绑定' },
-    { icon: '🔓', name: '解绑句柄', desc: '解除绑定某个游戏句柄' },
-    { icon: '🗺️', name: '地图检测', desc: '查询已配置地图的在线状态与离线统计' },
-    { icon: '🚫', name: '封禁记录', desc: '查询自己(或他人)的封禁记录，支持翻页' },
+    { icon: '绑', name: '绑定句柄', desc: '绑定星际争霸2游戏句柄，格式：[区域ID]-S2-[服务器ID]-[档案ID]' },
+    { icon: '句', name: '句柄', desc: '查询自己(或他人)已绑定的游戏句柄' },
+    { icon: '切', name: '切换', desc: '切换正在使用的游戏句柄' },
+    { icon: '查', name: '查询', desc: '查询某游戏句柄是否已被绑定' },
+    { icon: '解', name: '解绑句柄', desc: '解除绑定某个游戏句柄' },
+    { icon: '图', name: '地图检测', desc: '查询已配置地图的在线状态与离线统计' },
+    { icon: '封', name: '封禁记录', desc: '查询自己(或他人)的封禁记录，支持翻页' },
   ];
 
   ctx.command('ggcevo/咕咕之战', '查看咕咕之战玩法指令菜单')
