@@ -331,22 +331,35 @@ export function apply(ctx: Context, config: Config) {
   };
 
   // 仅统计 ggcevo 命名空间下的指令, 避免干扰其他插件的日志
-  const isGgcEvoCommand = (name: string) => name === 'ggcevo' || name.startsWith('ggcevo/');
+  // 注意: command.name 只是叶名称(如 '签到'), 需沿 parent 拼出完整路径(如 'ggcevo/签到')
+  const getFullCommandName = (command: { name: string; parent?: { name: string; parent?: unknown } | null }): string => {
+    const parts: string[] = [];
+    let cur: { name: string; parent?: unknown } | null | undefined = command;
+    while (cur) {
+      parts.unshift(cur.name);
+      cur = (cur as { parent?: unknown }).parent as { name: string; parent?: unknown } | null | undefined;
+    }
+    return parts.join('/');
+  };
+  const isGgcEvoCommand = (command: { name: string; parent?: { name: string; parent?: unknown } | null }): boolean => {
+    const full = getFullCommandName(command);
+    return full === 'ggcevo' || full.startsWith('ggcevo/');
+  };
 
   // 监听器始终注册(避免控制台修改配置后未重载插件导致监听器未注册), 输出与否由 debug() 内部开关控制
   ctx.on('command/before-execute', (argv) => {
     if (!config.debugEnabled) return;
     const { command, session, args, options } = argv;
-    if (!isGgcEvoCommand(command.name)) return;
+    if (!isGgcEvoCommand(command)) return;
     const optionStr = Object.keys(options).length ? ` | 选项: ${JSON.stringify(options)}` : '';
-    debug(`指令触发: ${command.name} | 用户: ${session.userId} | 平台: ${session.platform} | 参数: ${JSON.stringify(args)}${optionStr}`);
+    debug(`指令触发: ${getFullCommandName(command)} | 用户: ${session.userId} | 平台: ${session.platform} | 参数: ${JSON.stringify(args)}${optionStr}`);
   });
 
   ctx.on('command-error', (argv, error) => {
     if (!config.debugEnabled) return;
     const { command, session } = argv;
-    if (!isGgcEvoCommand(command.name)) return;
-    debug(`指令出错: ${command.name} | 用户: ${session.userId} | 错误: ${error?.message ?? error}`);
+    if (!isGgcEvoCommand(command)) return;
+    debug(`指令出错: ${getFullCommandName(command)} | 用户: ${session.userId} | 错误: ${error?.message ?? error}`);
   });
 
   // 启动探针: 便于确认调试模式是否生效
@@ -1400,10 +1413,11 @@ export function apply(ctx: Context, config: Config) {
     }
     const page = await ctx.puppeteer.page();
     try {
-      await page.setViewport({ width: 640, height: 800, deviceScaleFactor: 1 });
+      // deviceScaleFactor=4 使渲染输出约 2560x3200 高清图, 配合背景细纹理破坏 JPEG 压缩,
+      // 确保图片体积超过 3MB(uploadThreshold 默认值), 强制 QQ 官方适配器走分片上传(upload_prepare)通道
+      await page.setViewport({ width: 640, height: 800, deviceScaleFactor: 4 });
       await page.setContent(html, { waitUntil: 'networkidle0' });
-      // JPEG 压缩输出，显著减小体积以兼容 QQ 官方机器人素材限制
-      const img = await page.screenshot({ type: 'jpeg', quality: 85, fullPage: true });
+      const img = await page.screenshot({ type: 'jpeg', quality: 92, fullPage: true });
       // 以 base64 data URL 发送(与 preview-help 插件一致):
       // QQ 官方适配器会从 data URL 直接提取 base64 上传, 兼容性最佳, 无需额外素材上传服务
       const dataUrl = `data:image/jpeg;base64,${img.toString('base64')}`;
@@ -1439,7 +1453,10 @@ export function apply(ctx: Context, config: Config) {
 <head>
 <meta charset="UTF-8">
 <style>
-  body { margin: 0; padding: 24px 28px; background: linear-gradient(135deg, #1b2a4a 0%, #0f1a33 100%); font-family: "Microsoft YaHei", "PingFang SC", sans-serif; color: #e8eefc; }
+  body { margin: 0; padding: 24px 28px; background:
+    repeating-linear-gradient(45deg, rgba(255,255,255,0.02) 0 1px, transparent 1px 2px),
+    linear-gradient(135deg, #1b2a4a 0%, #0f1a33 100%);
+    font-family: "Microsoft YaHei", "PingFang SC", sans-serif; color: #e8eefc; }
   .header { text-align: center; padding-bottom: 18px; border-bottom: 2px solid rgba(120,160,255,0.35); }
   .title { font-size: 32px; font-weight: bold; letter-spacing: 6px; color: #8fc0ff; text-shadow: 0 0 18px rgba(90,140,255,0.45); }
   .subtitle { margin-top: 8px; font-size: 14px; color: #93a6c8; }
