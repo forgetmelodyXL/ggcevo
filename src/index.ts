@@ -1,5 +1,6 @@
 import { Context, Schema, h } from 'koishi'
 import type {} from 'koishi-plugin-puppeteer'
+import type {} from '@koishijs/assets'
 
 export const name = 'ggcevo'
 
@@ -64,7 +65,7 @@ export const Config: Schema<Config> = Schema.intersect([
 
 export const inject = {
   required: ['database'],
-  optional: ['puppeteer'],
+  optional: ['puppeteer', 'assets'],
 }
 
 export const ItemConfig: Record<number, string> = {
@@ -1367,6 +1368,20 @@ export function apply(ctx: Context, config: Config) {
       await page.setContent(html, { waitUntil: 'networkidle0' });
       // JPEG 压缩输出，显著减小体积以兼容 QQ 官方机器人素材限制
       const img = await page.screenshot({ type: 'jpeg', quality: 85, fullPage: true });
+      // 若配置了 assets 服务（如 koishi-plugin-assets-qqbot-part-file 分片上传），优先转公网 URL 发送，
+      // 避免 QQ 官方机器人直接发 Buffer 时受素材上传限制；失败或无 assets 时回退为直接发送
+      if (ctx.assets) {
+        try {
+          const dataUrl = `data:image/jpeg;base64,${img.toString('base64')}`;
+          const transformed = await ctx.assets.transform(String(h.image(dataUrl, { file: 'ggcevo-menu.jpg' })));
+          const url = h.parse(transformed)[0]?.attrs.src;
+          if (typeof url === 'string' && url) {
+            return h.image(url);
+          }
+        } catch (e) {
+          ctx.logger.warn(`菜单图 assets 上传失败，回退为直接发送: ${e}`);
+        }
+      }
       return h.image(img, 'image/jpeg');
     } finally {
       await page.close();

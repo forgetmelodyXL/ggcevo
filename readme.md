@@ -174,6 +174,11 @@ npm install koishi-plugin-ggcevo
 
 ## 更新日志
 
+### v1.1.14
+
+- **支持 assets 服务发送菜单图**：`咕咕之战`/`菜单` 渲染后若存在 `assets` 服务（如 `koishi-plugin-assets-qqbot-part-file`，通过 QQ 官方 `upload_prepare` 分片上传获取公网 URL），则优先转公网 URL 发送，避免 QQ 官方机器人直接发 Buffer 时受素材上传限制；未配置或上传失败时自动回退为直接发送。仅在启用该 assets 插件时生效，其他环境行为不变
+- **声明可选依赖**：`koishi-plugin-assets-qqbot-part-file`（^0.1.2）作为可选 peer 依赖
+
 ### v1.1.13
 
 - **指令菜单图标改为中文单字徽章**：`咕咕之战`/`菜单` 的图标由 emoji 改为彩色圆角徽章+白色单字（签/抽/换/包/信/兑/活/领/补/用/挖/探、绑/句/切/查/解/图/封），避免服务器缺少 emoji 字体时图标渲染为问号，任何环境下均可正常显示
