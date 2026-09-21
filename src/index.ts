@@ -3433,8 +3433,9 @@ export function apply(ctx: Context, config: Config) {
   .header { text-align: center; padding-bottom: 18px; border-bottom: 2px solid rgba(120,160,255,0.35); }
   .title { font-size: 32px; font-weight: bold; letter-spacing: 6px; color: #8fc0ff; text-shadow: 0 0 18px rgba(90,140,255,0.45); }
   .subtitle { margin-top: 8px; font-size: 14px; color: #93a6c8; }
-  .group { margin-top: 22px; }
+  .group { margin-top: 22px; break-inside: avoid; }
   .group-title { font-size: 15px; font-weight: bold; color: #ffd98a; letter-spacing: 3px; margin-bottom: 10px; padding-left: 10px; border-left: 3px solid #ffd98a; }
+  .groups { column-count: 2; column-gap: 24px; }
   .list { display: flex; flex-direction: column; gap: 12px; }
   .item { display: flex; align-items: center; gap: 14px; background: rgba(255,255,255,0.07); border: 1px solid rgba(140,170,255,0.22); border-radius: 12px; padding: 12px 16px; }
   .icon { width: 40px; height: 40px; border-radius: 10px; display: flex; align-items: center; justify-content: center; font-size: 19px; font-weight: bold; color: #fff; flex-shrink: 0; }
@@ -3449,7 +3450,7 @@ export function apply(ctx: Context, config: Config) {
     <div class="title">${title}</div>
     <div class="subtitle">${subtitle}</div>
   </div>
-  ${groupHtml}
+  <div class="groups">${groupHtml}</div>
   <div class="footer">输入上方指令名即可使用对应功能</div>
 </body>
 </html>`
