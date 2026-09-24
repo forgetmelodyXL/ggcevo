@@ -175,9 +175,15 @@ npm install koishi-plugin-ggcevo
 - `ggcevo_admin_welfare` — 管理员福利（主键 `id` 自增，对应文档行号 `id+1`，每小时全量同步；A列QQ号/B列句柄）
 - `ggcevo_mining` — 挖矿状态与累计统计（主键 `user_id`，复用句柄标识；含本轮开始时间 `start_time`、累计挖矿时长 `total_minutes`、累计收益金币 `total_coins`）
 - `ggcevo_explore` — 探索状态（主键 `user_id`，复用句柄标识；含当前星系 `galaxy_id`、本轮开始时间 `start_time`）
-- `ggcevo_explore_stats` — 探索统计（复合主键 `user_id` + `galaxy_id`；含探索次数 `total_count`、成功次数 `success_count`、失败次数 `fail_count`、累计获得金币 `total_coins`）
+- `ggcevo_explore_stats` — 探索统计（复合主键 `user_id` + `galaxy_id`；含探索次数 `total_count`、成功次数 `success_count`、失败次数 `fail_count`、获得道具的探索次数 `item_count`、累计获得金币 `total_coins`）
 
 ## 更新日志
+
+### v1.3.8
+
+探索统计新增获得道具次数。
+
+- **探索统计新增 `item_count`**：`ggcevo_explore_stats` 表新增"获得道具的探索次数"字段，一次探索无论获得多少个道具均计 1 次；结算消息同步展示 `获得道具 X 次`（目前仅千帆星系有道具掉落）
 
 ### v1.3.7
 

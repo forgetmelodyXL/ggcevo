@@ -251,6 +251,8 @@ export interface GgcEvoExploreStat {
   success_count: number
   /** 累计失败次数 */
   fail_count: number
+  /** 累计获得道具的探索次数(一次探索无论获得多少个道具均计1次) */
+  item_count: number
   /** 累计获得金币数(含失败安慰奖) */
   total_coins: number
   /** 最近一次更新/领取时间 */
@@ -580,6 +582,7 @@ export function apply(ctx: Context, config: Config) {
     total_count: 'unsigned',
     success_count: 'unsigned',
     fail_count: 'unsigned',
+    item_count: 'unsigned',
     total_coins: 'unsigned',
     update_time: 'timestamp',
   }, {
@@ -1416,6 +1419,7 @@ export function apply(ctx: Context, config: Config) {
         total_count: (stat?.total_count || 0) + 1,
         success_count: (stat?.success_count || 0) + (isSuccess ? 1 : 0),
         fail_count: (stat?.fail_count || 0) + (isSuccess ? 0 : 1),
+        item_count: (stat?.item_count || 0) + (droppedItems.length > 0 ? 1 : 0),
         total_coins: (stat?.total_coins || 0) + gold,
         update_time: now,
       };
@@ -1432,7 +1436,7 @@ export function apply(ctx: Context, config: Config) {
         ? `🛸 探索完成！「${galaxy.name}」探索成功！`
         : `🛸 探索完成！「${galaxy.name}」探索失败，获得安慰奖。`;
       const body = rewardLines.length ? `\n${rewardLines.join('\n')}` : '';
-      return `<quote id="${session.messageId}"/>${resultMsg}${body}\n📊 该星系累计探索 ${newStat.total_count} 次，成功 ${newStat.success_count} 次，累计获得 ${newStat.total_coins} 金币\n🛸 可再次使用 探索 命令选择星系开启新的探索。`;
+      return `<quote id="${session.messageId}"/>${resultMsg}${body}\n📊 该星系累计探索 ${newStat.total_count} 次，成功 ${newStat.success_count} 次，获得道具 ${newStat.item_count} 次，累计获得 ${newStat.total_coins} 金币\n🛸 可再次使用 探索 命令选择星系开启新的探索。`;
     });
 
   ctx.command('ggcevo/兑换 <name:string>')
